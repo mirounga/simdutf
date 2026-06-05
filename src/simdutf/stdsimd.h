@@ -99,6 +99,18 @@
   #define SIMDUTF_STDSIMD_AVX2_KERNELS 0
 #endif
 
+// A tier can run 256-bit AVX2 intrinsic kernels iff it is AVX2 or AVX512 (AVX-512
+// implies AVX2). The SSE tier (128-bit) instead reuses westmere's pure-128-bit
+// kernels. Standalone bulk transcoders therefore tier-select: HAS_AVX2 ->
+// haswell's avx2_* kernel, else -> westmere's sse_* kernel. (A native 512-bit
+// icelake-style kernel per direction is a further AVX-512 optimization.)
+#if (SIMDUTF_STDSIMD_TIER == SIMDUTF_STDSIMD_TIER_AVX2) ||                     \
+    (SIMDUTF_STDSIMD_TIER == SIMDUTF_STDSIMD_TIER_AVX512)
+  #define SIMDUTF_STDSIMD_HAS_AVX2 1
+#else
+  #define SIMDUTF_STDSIMD_HAS_AVX2 0
+#endif
+
 // The generic UTF-8 validator (generic/utf8_validation/utf8_lookup4_algorithm.h)
 // tiles each 64-byte block into 1, 2 or 4 chunks. The stdsimd wrapper's simd8x64
 // has 64 / VEC_BYTES chunks: 4 (SSE), 2 (AVX2), 1 (AVX512). The validator now has
