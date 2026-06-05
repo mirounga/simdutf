@@ -34,38 +34,45 @@
 } // namespace SIMDUTF_IMPLEMENTATION (temporarily)
 } // namespace simdutf (temporarily)
 
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16 && SIMDUTF_STDSIMD_AVX2_KERNELS
+#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
 
 // --- anonymous-namespace sources (escape-hatch intrinsic kernels) ------------
-// Both kernels keep the x86 AVX2 intrinsics: they have no portable std::simd
-// form (table-driven byte compression / masked transcoding). They are emitted
-// in the backend's anonymous namespace, exactly like haswell does, so the
-// generic utf8_to_utf16 converter can call convert_masked_utf8_to_utf16() by
-// unqualified name from the enclosing scope. AVX2 tier only (256-bit kernels);
-// SSE/AVX512 tiers route this family to scalar below.
+// These keep x86 intrinsics: they have no portable std::simd form (table-driven
+// byte compression / masked transcoding). Emitted in the backend's anonymous
+// namespace, exactly like haswell does, so the generic utf8_to_utf16 converter
+// can call convert_masked_utf8_to_utf16() unqualified.
+//
+// The utf8 -> utf16 masked per-block kernel is fundamentally a 128-bit op (it
+// loads a __m128i and emits <=12 utf16). We therefore use westmere's pure
+// 128-bit kernel on the SSE and AVX512 tiers (where it runs natively) and
+// haswell's 256-bit kernel on the AVX2 tier. The generic driver supplies the
+// tier-width ASCII fast path + chunked validation (NUM_CHUNKS 1/2/4). This is
+// what lets utf8 -> utf16 run as real SIMD on EVERY tier.
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 namespace {
 using namespace simd;
 
-// utf8 -> utf16 per-block masked transcoder (pure intrinsics + tables).
-  #include "haswell/avx2_convert_utf8_to_utf16.cpp"
+  #if SIMDUTF_STDSIMD_AVX2_KERNELS
+    #include "haswell/avx2_convert_utf8_to_utf16.cpp"
+  #else
+    #include "westmere/sse_convert_utf8_to_utf16.cpp"
+  #endif
 
-// utf16 -> utf8 bulk transcoder (adapted from haswell, x86 intrinsic escape
-// hatches kept; lives in stdsimd/).
-  #include "stdsimd/convert_utf16_to_utf8.cpp"
+// utf16 -> utf8 bulk transcoder (256-bit, adapted from haswell): AVX2 tier only.
+  #if SIMDUTF_STDSIMD_AVX2_KERNELS
+    #include "stdsimd/convert_utf16_to_utf8.cpp"
+  #endif
 } // unnamed namespace
 } // namespace SIMDUTF_IMPLEMENTATION
 } // namespace simdutf
 
-// --- generic utf8 -> utf16 algorithm headers (reused VERBATIM) ---------------
-// These self-open simdutf::SIMDUTF_IMPLEMENTATION::{anon}::utf8_to_utf16 and
-// call convert_masked_utf8_to_utf16() (defined just above) unqualified.
+// --- generic utf8 -> utf16 algorithm headers (reused VERBATIM, all tiers) -----
   #include "generic/utf8_to_utf16/valid_utf8_to_utf16.h"
   #include "generic/utf8_to_utf16/utf8_to_utf16.h"
 
 // clang-format off
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16 && SIMDUTF_STDSIMD_AVX2_KERNELS
+#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
 // clang-format on
 
 // ---- reopen simdutf::SIMDUTF_IMPLEMENTATION for the rest of the TU. ----------
@@ -74,11 +81,9 @@ namespace SIMDUTF_IMPLEMENTATION {
 
 #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
 
-#if SIMDUTF_STDSIMD_AVX2_KERNELS
-// ===== AVX2 tier: real SIMD (haswell avx2 kernels + generic driver). =========
-
 // ===========================================================================
-// utf8 -> utf16  (reuses generic utf8_to_utf16:: VERBATIM, like haswell)
+// utf8 -> utf16  (reuses generic utf8_to_utf16:: VERBATIM; real SIMD on ALL
+// tiers via the 128/256-bit masked kernel above + the NUM_CHUNKS 1/2/4 driver)
 // ===========================================================================
 simdutf_warn_unused size_t implementation::convert_utf8_to_utf16le(
     const char *buf, size_t len, char16_t *utf16_output) const noexcept {
@@ -117,8 +122,10 @@ simdutf_warn_unused size_t implementation::convert_valid_utf8_to_utf16be(
                                                        utf16_output);
 }
 
+#if SIMDUTF_STDSIMD_AVX2_KERNELS
 // ===========================================================================
-// utf16 -> utf8  (adapted avx2_convert_utf16_to_utf8 kernel + scalar tail)
+// utf16 -> utf8  (256-bit adapted kernel + scalar tail): AVX2 tier only.
+// SSE/AVX512 use the scalar tail in the #else below.
 // ===========================================================================
 simdutf_warn_unused size_t implementation::convert_utf16le_to_utf8(
     const char16_t *buf, size_t len, char *utf8_output) const noexcept {
@@ -227,43 +234,8 @@ simdutf_warn_unused size_t implementation::convert_valid_utf16be_to_utf8(
 }
 
 #else // !SIMDUTF_STDSIMD_AVX2_KERNELS
-// ===== SSE / AVX512 tiers: delegate utf8<->utf16 to scalar (same as fallback).
-
-simdutf_warn_unused size_t implementation::convert_utf8_to_utf16le(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf8_to_utf16::convert<endianness::LITTLE>(buf, len,
-                                                            utf16_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_utf8_to_utf16be(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf8_to_utf16::convert<endianness::BIG>(buf, len,
-                                                         utf16_output);
-}
-
-simdutf_warn_unused result implementation::convert_utf8_to_utf16le_with_errors(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf8_to_utf16::convert_with_errors<endianness::LITTLE>(
-      buf, len, utf16_output);
-}
-
-simdutf_warn_unused result implementation::convert_utf8_to_utf16be_with_errors(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf8_to_utf16::convert_with_errors<endianness::BIG>(
-      buf, len, utf16_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_valid_utf8_to_utf16le(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf8_to_utf16::convert_valid<endianness::LITTLE>(buf, len,
-                                                                  utf16_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_valid_utf8_to_utf16be(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf8_to_utf16::convert_valid<endianness::BIG>(buf, len,
-                                                               utf16_output);
-}
+// ===== SSE / AVX512 tiers: utf16 -> utf8 via scalar (utf8 -> utf16 above is
+// ===== real SIMD on every tier). =============================================
 
 simdutf_warn_unused size_t implementation::convert_utf16le_to_utf8(
     const char16_t *buf, size_t len, char *utf8_output) const noexcept {

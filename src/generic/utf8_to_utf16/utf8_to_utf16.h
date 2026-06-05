@@ -154,11 +154,14 @@ struct validating_transcoder {
         // you might think that a for-loop would work, but under Visual Studio,
         // it is not good enough.
         static_assert(
-            (simd8x64<uint8_t>::NUM_CHUNKS == 2) ||
+            (simd8x64<uint8_t>::NUM_CHUNKS == 1) ||
+                (simd8x64<uint8_t>::NUM_CHUNKS == 2) ||
                 (simd8x64<uint8_t>::NUM_CHUNKS == 4),
-            "We support either two or four chunks per 64-byte block.");
+            "We support one, two or four chunks per 64-byte block.");
         auto zero = simd8<uint8_t>{uint8_t(0)};
-        if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 2) {
+        if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 1) {
+          this->check_utf8_bytes(input.chunks[0], zero);
+        } else if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 2) {
           this->check_utf8_bytes(input.chunks[0], zero);
           this->check_utf8_bytes(input.chunks[1], input.chunks[0]);
         } else if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 4) {
@@ -242,11 +245,14 @@ struct validating_transcoder {
         // you might think that a for-loop would work, but under Visual Studio,
         // it is not good enough.
         static_assert(
-            (simd8x64<uint8_t>::NUM_CHUNKS == 2) ||
+            (simd8x64<uint8_t>::NUM_CHUNKS == 1) ||
+                (simd8x64<uint8_t>::NUM_CHUNKS == 2) ||
                 (simd8x64<uint8_t>::NUM_CHUNKS == 4),
-            "We support either two or four chunks per 64-byte block.");
+            "We support one, two or four chunks per 64-byte block.");
         auto zero = simd8<uint8_t>{uint8_t(0)};
-        if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 2) {
+        if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 1) {
+          this->check_utf8_bytes(input.chunks[0], zero);
+        } else if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 2) {
           this->check_utf8_bytes(input.chunks[0], zero);
           this->check_utf8_bytes(input.chunks[1], input.chunks[0]);
         } else if constexpr (simd8x64<uint8_t>::NUM_CHUNKS == 4) {

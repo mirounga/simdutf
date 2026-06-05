@@ -27,16 +27,20 @@ The wrapper (`simd.h` + `simd16/32/64-inl.h`) is width-parameterized and routes 
 few non-portable ops through `tier_ops.h` (per-tier impl in
 `tier_ops_{sse,avx2,avx512}.h`). On top of that:
 
-- **Fully `std::simd` on EVERY tier** (wrapper-only, no arch kernel): `validate_utf8`,
-  `validate_ascii`, `validate_utf16`, `validate_utf32`, `count_*`, `find`, `detect`.
-  These run as real SIMD at SSE/AVX2/AVX512 widths. (e.g. AVX-512 `validate_utf8`
-  ~26 GB/s, matching/beating icelake.)
-- **AVX2 tier only** (256-bit hand-adapted kernels): the transcoders that call a
-  per-block masked kernel — `utf8↔utf16/utf32`, all `latin1` conversions,
-  `utf16↔utf32`, `utf16fix`, and `base64`. On the SSE and AVX-512 tiers these
-  families currently delegate to the scalar reference. Porting the masked per-block
-  kernels (`convert_masked_utf8_to_*`, `avx2_convert_*`, `avx2_base64`) to native
-  128-bit / 512-bit `std::simd` is the remaining work for full per-tier SIMD.
+- **Real SIMD on EVERY tier:**
+  - *Wrapper-only* (no arch kernel): `validate_utf8`, `validate_ascii`,
+    `validate_utf16`, `validate_utf32`, `count_*`, `find`, `detect`. (e.g. AVX-512
+    `validate_utf8` ~26 GB/s, matching/beating icelake.)
+  - *Masked-kernel transcoders* `utf8→utf16`, `utf8→utf32`, `utf8→latin1`: the
+    `convert_masked_utf8_to_*` per-block kernel is fundamentally a 128-bit op, so the
+    SSE/AVX-512 tiers use westmere's pure-128-bit kernel and the AVX2 tier uses
+    haswell's 256-bit one; the generic driver supplies the tier-width ASCII fast path
+    + `NUM_CHUNKS` 1/2/4 validation. (SSE/AVX-512 ~2.3–3.0 GB/s vs ~0.45 scalar.)
+- **AVX2 tier only** (256-bit hand-adapted bulk kernels; SSE/AVX-512 → scalar):
+  the *reverse / non-utf8-source* directions — `utf16→utf8`, `utf32→utf8`,
+  `latin1→utf8/utf16/utf32`, `utf16↔utf32`, `utf16→latin1`, `utf32→latin1`,
+  `utf16fix`, `base64`. These are standalone width-specific kernels; porting them to
+  native 128-bit (westmere-style) and 512-bit (icelake-style) is the remaining work.
 
 ## Design notes
 

@@ -46,56 +46,47 @@
 // haswell/avx2_convert_*latin1*.cpp). Those 256-bit intrinsics require the AVX2
 // ISA, so the SIMD latin1 family is AVX2 tier only; SSE/AVX512 tiers delegate
 // every latin1 direction to scalar (same as the fallback backend).
-#if SIMDUTF_STDSIMD_AVX2_KERNELS
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 namespace {
 using namespace simd;
 
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-// latin1 -> utf8 bulk transcoder.
-  #include "stdsimd/convert_latin1_to_utf8.cpp"
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-// latin1 -> utf16 bulk transcoder.
-  #include "stdsimd/convert_latin1_to_utf16.cpp"
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-// latin1 -> utf32 bulk transcoder.
-  #include "stdsimd/convert_latin1_to_utf32.cpp"
-#endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-// utf16 -> latin1 bulk transcoder.
-  #include "stdsimd/convert_utf16_to_latin1.cpp"
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-// utf32 -> latin1 bulk transcoder.
-  #include "stdsimd/convert_utf32_to_latin1.cpp"
-#endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
+// latin1 <-> {utf8,utf16,utf32} bulk transcoders: 256-bit hand-adapted kernels,
+// AVX2 tier only. SSE/AVX512 route those directions to scalar (below).
+#if SIMDUTF_STDSIMD_AVX2_KERNELS
+  #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
+    #include "stdsimd/convert_latin1_to_utf8.cpp"
+  #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
+  #if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
+    #include "stdsimd/convert_latin1_to_utf16.cpp"
+    #include "stdsimd/convert_utf16_to_latin1.cpp"
+  #endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
+  #if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
+    #include "stdsimd/convert_latin1_to_utf32.cpp"
+    #include "stdsimd/convert_utf32_to_latin1.cpp"
+  #endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
+#endif // SIMDUTF_STDSIMD_AVX2_KERNELS
 
 #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-// utf8 -> latin1 per-block masked transcoder (pure intrinsics + tables); the
-// generic utf8_to_latin1 converter calls convert_masked_utf8_to_latin1() by
-// unqualified name.
-  #include "haswell/avx2_convert_utf8_to_latin1.cpp"
+// utf8 -> latin1 per-block masked transcoder: a 128-bit op, so westmere's pure
+// 128-bit kernel on SSE/AVX512 and haswell's 256-bit on AVX2. ALL tiers, so
+// utf8 -> latin1 runs as real SIMD everywhere. The generic utf8_to_latin1
+// converter calls convert_masked_utf8_to_latin1() unqualified.
+  #if SIMDUTF_STDSIMD_AVX2_KERNELS
+    #include "haswell/avx2_convert_utf8_to_latin1.cpp"
+  #else
+    #include "westmere/sse_convert_utf8_to_latin1.cpp"
+  #endif
 #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 } // unnamed namespace
 } // namespace SIMDUTF_IMPLEMENTATION
 } // namespace simdutf
 
-// --- generic utf8 -> latin1 algorithm headers (reused VERBATIM) --------------
-// These self-open simdutf::SIMDUTF_IMPLEMENTATION::{anon}::utf8_to_latin1 and
-// call convert_masked_utf8_to_latin1() (defined just above) unqualified.
+// --- generic utf8 -> latin1 algorithm headers (reused VERBATIM, all tiers) ----
 #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
   #include "generic/utf8_to_latin1/utf8_to_latin1.h"
   #include "generic/utf8_to_latin1/valid_utf8_to_latin1.h"
 #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#endif // SIMDUTF_STDSIMD_AVX2_KERNELS (latin1 SIMD kernels + generic headers)
 
 // ---- reopen simdutf::SIMDUTF_IMPLEMENTATION for the rest of the TU. ----------
 namespace simdutf {
@@ -410,19 +401,23 @@ simdutf_warn_unused size_t implementation::convert_latin1_to_utf32(
 #endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
 
 #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
+// utf8 -> latin1 is real SIMD on every tier (128-bit masked kernel + generic
+// driver above), so the SSE/AVX512 versions are identical to the AVX2 ones.
 simdutf_warn_unused size_t implementation::convert_utf8_to_latin1(
     const char *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf8_to_latin1::convert(buf, len, latin1_output);
+  utf8_to_latin1::validating_transcoder converter;
+  return converter.convert(buf, len, latin1_output);
 }
 
 simdutf_warn_unused result implementation::convert_utf8_to_latin1_with_errors(
     const char *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf8_to_latin1::convert_with_errors(buf, len, latin1_output);
+  utf8_to_latin1::validating_transcoder converter;
+  return converter.convert_with_errors(buf, len, latin1_output);
 }
 
 simdutf_warn_unused size_t implementation::convert_valid_utf8_to_latin1(
     const char *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf8_to_latin1::convert_valid(buf, len, latin1_output);
+  return utf8_to_latin1::convert_valid(buf, len, latin1_output);
 }
 #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 
