@@ -22,7 +22,8 @@
 } // namespace SIMDUTF_IMPLEMENTATION (temporarily)
 } // namespace simdutf (temporarily)
 
-#if SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
+#if (SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING) &&                \
+    SIMDUTF_STDSIMD_UTF8_LOOKUP4
 
 // The generic UTF-8 checker calls two helpers by unqualified name from inside
 // the backend's anonymous namespace:
@@ -63,22 +64,49 @@ must_be_2_3_continuation(const simd8<uint8_t> prev2,
   #include "generic/utf8_validation/utf8_lookup4_algorithm.h"
   #include "generic/utf8_validation/utf8_validator.h"
 
-#endif // SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
+// clang-format off
+#endif // (SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING) && SIMDUTF_STDSIMD_UTF8_LOOKUP4
+// clang-format on
 
 // ---- reopen simdutf::SIMDUTF_IMPLEMENTATION for the rest of the TU. ---------
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 
+#if SIMDUTF_STDSIMD_UTF8_LOOKUP4
+// ===== SSE / AVX2 tiers: real generic SIMD UTF-8 validator. ==================
+
 #if SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
 simdutf_warn_unused bool
 implementation::validate_utf8(const char *buf, size_t len) const noexcept {
-  return stdsimd::utf8_validation::generic_validate_utf8(buf, len);
+  return SIMDUTF_IMPLEMENTATION::utf8_validation::generic_validate_utf8(buf,
+                                                                        len);
 }
 #endif // SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
 
 #if SIMDUTF_FEATURE_UTF8
 simdutf_warn_unused result implementation::validate_utf8_with_errors(
     const char *buf, size_t len) const noexcept {
-  return stdsimd::utf8_validation::generic_validate_utf8_with_errors(buf, len);
+  return SIMDUTF_IMPLEMENTATION::utf8_validation::
+      generic_validate_utf8_with_errors(buf, len);
 }
 #endif // SIMDUTF_FEATURE_UTF8
+
+#else // !SIMDUTF_STDSIMD_UTF8_LOOKUP4
+// ===== AVX512 tier (single 64-byte chunk): the generic lookup4 validator
+// ===== requires 2 or 4 chunks, so delegate validate_utf8 to scalar. ==========
+
+#if SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
+simdutf_warn_unused bool
+implementation::validate_utf8(const char *buf, size_t len) const noexcept {
+  return scalar::utf8::validate(buf, len);
+}
+#endif // SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
+
+#if SIMDUTF_FEATURE_UTF8
+simdutf_warn_unused result implementation::validate_utf8_with_errors(
+    const char *buf, size_t len) const noexcept {
+  return scalar::utf8::validate_with_errors(buf, len);
+}
+#endif // SIMDUTF_FEATURE_UTF8
+
+#endif // SIMDUTF_STDSIMD_UTF8_LOOKUP4

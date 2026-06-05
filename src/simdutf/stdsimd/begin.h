@@ -1,10 +1,12 @@
-#define SIMDUTF_IMPLEMENTATION stdsimd
+// The active tier's namespace token (stdsimd_sse / stdsimd_avx2 /
+// stdsimd_avx512) is derived from SIMDUTF_STDSIMD_VEC_BYTES in stdsimd.h.
+#define SIMDUTF_IMPLEMENTATION SIMDUTF_STDSIMD_NS
 #define SIMDUTF_SIMD_HAS_BYTEMASK 1
 
-// The stdsimd backend compiles at the same AVX2 tier as haswell: it applies the
-// identical target region ("avx2,bmi,lzcnt,popcnt"). The std::simd widths are
-// pinned explicitly (vec<uint8_t,32> etc.) so they are independent of the
-// command-line ISA, but the escape-hatch intrinsics still need the region.
+// Each stdsimd tier applies its own function-target region (set in stdsimd.h as
+// SIMDUTF_TARGET_STDSIMD). The std::simd widths are pinned explicitly
+// (vec<uint8_t,BYTES>) so they are independent of the command-line ISA, but the
+// escape-hatch intrinsics still need the region.
 #if SIMDUTF_CAN_ALWAYS_RUN_STDSIMD
 // nothing needed.
 #else

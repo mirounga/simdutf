@@ -1,63 +1,56 @@
 # `stdsimd` backend — C++26 `std::simd` (GCC 16+)
 
-An **experimental, additive** simdutf backend whose SIMD kernels are written once
-against C++26 `std::simd` (`<simd>`) instead of per-architecture intrinsics. It is
-the first slice of a longer-term effort to collapse the per-arch wrappers into a
-single portable source.
+An **experimental, additive** simdutf backend whose SIMD kernels are written against
+C++26 `std::simd` (`<simd>`) instead of per-architecture intrinsics. It ships as
+**three runtime-selectable tiers**, each compiled in its own translation unit with a
+per-tier `-march` baseline and a pinned `std::simd` vector width:
+
+| Tier | name | vec | TU flags | runtime ISA |
+|---|---|---|---|---|
+| SSE | `stdsimd_sse` | `vec<u8,16>` | `-msse4.2` | SSE4.2 |
+| AVX2 | `stdsimd_avx2` | `vec<u8,32>` | `-mavx2 -mbmi -mbmi2` | AVX2+BMI |
+| AVX-512 | `stdsimd_avx512` | `vec<u8,64>` | `-mavx512f/bw/cd/dq/vl/vbmi/vbmi2` | AVX-512 |
 
 ## Status
 
-- **Off by default.** Enable with `-DSIMDUTF_IMPLEMENTATION_STDSIMD=ON` (requires
-  **GCC ≥ 16** and **C++26**). On any other toolchain the option self-disables and
-  the build is unchanged.
-- **Additive & FORCE-only.** It registers below every tuned backend, so runtime
-  auto-detection never selects it. Reach it with
-  `SIMDUTF_FORCE_IMPLEMENTATION=stdsimd`. The existing 9 backends are untouched.
-- **AVX2 tier.** `std::simd::vec<uint8_t,32>` (width pinned to 32). Requires AVX2 at
-  runtime (`required_instruction_sets = AVX2|BMI1|BMI2`).
-- **Families implemented in `std::simd`:** `validate_utf8`, `utf8↔utf16` (LE/BE,
-  both directions, incl. `with_errors`/`valid`), `base64` (encode/decode). Every
-  other public method delegates to the scalar reference, so the backend is complete
-  and correct (it passes the full suite forced to `stdsimd`).
+- **Off by default** (`-DSIMDUTF_IMPLEMENTATION_STDSIMD=ON`; GCC ≥ 16, C++26). Self-
+  disables on any other toolchain.
+- **Additive & FORCE-only.** All three tiers register below the tuned backends, so
+  auto-detection never selects them. Reach a tier with
+  `SIMDUTF_FORCE_IMPLEMENTATION=stdsimd_{sse,avx2,avx512}`.
+- The full suite passes forced to each tier (modulo the two known packaging
+  artifacts, `amalgamation_demo` / `nostdlibcxx`, which can't host `std::simd`).
+
+## Per-tier feature coverage
+
+The wrapper (`simd.h` + `simd16/32/64-inl.h`) is width-parameterized and routes the
+few non-portable ops through `tier_ops.h` (per-tier impl in
+`tier_ops_{sse,avx2,avx512}.h`). On top of that:
+
+- **Fully `std::simd` on EVERY tier** (wrapper-only, no arch kernel): `validate_utf8`,
+  `validate_ascii`, `validate_utf16`, `validate_utf32`, `count_*`, `find`, `detect`.
+  These run as real SIMD at SSE/AVX2/AVX512 widths. (e.g. AVX-512 `validate_utf8`
+  ~26 GB/s, matching/beating icelake.)
+- **AVX2 tier only** (256-bit hand-adapted kernels): the transcoders that call a
+  per-block masked kernel — `utf8↔utf16/utf32`, all `latin1` conversions,
+  `utf16↔utf32`, `utf16fix`, and `base64`. On the SSE and AVX-512 tiers these
+  families currently delegate to the scalar reference. Porting the masked per-block
+  kernels (`convert_masked_utf8_to_*`, `avx2_convert_*`, `avx2_base64`) to native
+  128-bit / 512-bit `std::simd` is the remaining work for full per-tier SIMD.
 
 ## Design notes
 
-- **Wrapper:** `simd.h`, `simd16/32/64-inl.h` replicate the haswell wrapper
-  interface over `std::simd`, so `src/generic/*` algorithms compile against it
-  verbatim. Policy is portable `std::simd` by default; a few ops with no portable
-  form use guarded intrinsic escape hatches (`lookup_16`→`pshufb`, `prev<N>`→
-  `alignr`, `to_bitmask`→`movemask`, `saturating_sub`→`subs_epu8`, BE swap) bridged
-  by `std::bit_cast<__m256i>` (free — same 32-byte layout).
-- **The ABI / dedicated TU (important).** `std::simd`'s vector ABI follows the TU's
-  command-line `-march`, **not** the per-function `target("avx2")` pragma. Under the
-  no-AVX baseline the 32-byte vec is passed through memory, which made the kernels
-  ~16× slower. The backend is therefore compiled in its **own translation unit**
-  (`src/simdutf_stdsimd.cpp`, which re-includes `simdutf.cpp` with
-  `SIMDUTF_STDSIMD_ONLY=1`) using a `-mavx2` command-line baseline, giving the vec
-  the YMM register ABI. We cannot put `-mavx2` on the whole library — it would
-  VEX-encode the runtime dispatcher and SIGILL on pre-AVX CPUs.
-
-## Performance (GCC 16, Ryzen AI 9 HX PRO 370, forced backends)
-
-With the dedicated-TU ABI fix, the portable `std::simd` kernels match hand-written
-AVX2 intrinsics:
-
-| Procedure | stdsimd | haswell |
-|---|---|---|
-| `validate_utf8` | ~26.7 GB/s | ~19.5 |
-| `validate_utf8_with_errors` | ~24 | ~26 |
-| `convert_utf8_to_utf16le` | ~2.74 (~98%) | ~2.79 |
-| `convert_valid_utf8_to_utf16le` | ~3.18 (~99%) | ~3.22 |
-
-## Known limitations
-
-- **Single-header / amalgamation** does not include the dedicated-TU machinery, so a
-  single-header build that enables stdsimd gets the slow (memory-ABI) path. Use the
-  CMake library build for the fast path.
-- **`nostdlibcxx`** cannot host stdsimd (`std::simd` needs libstdc++); it is correctly
-  absent there. Forcing `stdsimd` onto binaries that don't include it (e.g.
-  `amalgamation_demo` built strict `-std=c++26`, `nostdlibcxx_c_api_test`) falls
-  through to unsupported — an artifact of global force, not a defect. Default
-  (auto-detect) runs of those binaries pass.
-- Escape-hatch non-x86 arms (arm/scalar) are written but unexercised at this AVX2
-  tier (`// TODO(verify)`), pending the cross-arch and multi-tier slices.
+- **ABI / dedicated TU (critical).** `std::simd`'s vector ABI follows the TU's
+  command-line `-march`, **not** the `target(...)` pragma. Each tier is therefore a
+  separate TU (`simdutf_stdsimd_{sse,avx2,avx512}.cpp`, each re-including
+  `simdutf.cpp` with `SIMDUTF_STDSIMD_ONLY` + the tier's `SIMDUTF_STDSIMD_VEC_BYTES`)
+  built with the matching `-march`, giving the vec the XMM/YMM/ZMM register ABI.
+  Without this the vec is passed through memory (~16× slower).
+- **Mask model.** `mask<u8,N>` is a `__mmask` register on AVX-512, so the wrapper
+  keeps `simd8<bool>` as a 0xFF/0x00 byte vector everywhere; only `to_bitmask`
+  differs per tier (`movemask` vs `movepi8_mask`).
+- **Shared-algorithm width fixes.** The generic UTF-8 validator gained a
+  `NUM_CHUNKS==1` path (for the single-64-byte-chunk AVX-512 tier), `max_array` was
+  widened to 64 bytes (the tail-load was width-dependent), and `repeat_16` now
+  broadcasts the 16-byte lookup table across all 128-bit lanes. These are additive
+  and behaviour-preserving for the existing 16/32-byte backends.

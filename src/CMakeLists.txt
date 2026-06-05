@@ -103,14 +103,24 @@ if(SIMDUTF_IMPLEMENTATION_STDSIMD)
   message(STATUS "SIMDUTF_IMPLEMENTATION_STDSIMD is ON: building the C++26 std::simd backend.")
   target_compile_definitions(simdutf PRIVATE SIMDUTF_IMPLEMENTATION_STDSIMD=1)
   target_compile_features(simdutf PRIVATE cxx_std_26)
-  # The std::simd backend is compiled in its own TU with an AVX2 command-line
-  # baseline so that std::simd's vec<uint8_t,32> uses the YMM register ABI rather
-  # than the no-AVX memory ABI the target-pragma alone leaves in place (which
-  # made validate_utf8 ~16x slower). This file emits ONLY the stdsimd backend
-  # (SIMDUTF_STDSIMD_ONLY); the rest of the library stays in simdutf.cpp.
-  target_sources(simdutf PRIVATE simdutf_stdsimd.cpp)
-  set_source_files_properties(simdutf_stdsimd.cpp PROPERTIES
+  # The std::simd backend ships as THREE runtime-selectable tiers, each compiled
+  # in its own TU with a per-tier -march command-line baseline so that
+  # std::simd's vec<uint8_t,N> uses the register ABI (XMM/YMM/ZMM) rather than
+  # the no-SIMD memory ABI the target-pragma alone leaves in place (which made
+  # validate_utf8 ~16x slower at the AVX2 tier). Each TU defines
+  # SIMDUTF_STDSIMD_VEC_BYTES (16/32/64) to select the tier and emits ONLY the
+  # stdsimd backend (SIMDUTF_STDSIMD_ONLY); the rest of the library stays in
+  # simdutf.cpp.
+  target_sources(simdutf PRIVATE
+    simdutf_stdsimd_sse.cpp
+    simdutf_stdsimd_avx2.cpp
+    simdutf_stdsimd_avx512.cpp)
+  set_source_files_properties(simdutf_stdsimd_sse.cpp PROPERTIES
+    COMPILE_OPTIONS "-msse4.2")
+  set_source_files_properties(simdutf_stdsimd_avx2.cpp PROPERTIES
     COMPILE_OPTIONS "-mavx2;-mbmi;-mbmi2;-mlzcnt")
+  set_source_files_properties(simdutf_stdsimd_avx512.cpp PROPERTIES
+    COMPILE_OPTIONS "-mavx512f;-mavx512bw;-mavx512cd;-mavx512dq;-mavx512vl;-mavx512vbmi;-mavx512vbmi2;-mbmi;-mbmi2;-mlzcnt")
 endif()
 
 include(CheckCXXCompilerFlag)

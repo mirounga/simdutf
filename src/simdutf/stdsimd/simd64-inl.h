@@ -1,10 +1,11 @@
 // part of simd.h. std::simd wrapper presenting haswell/simd64-inl.h's interface
 // over pinned-width vec<uint64_t,4>.
 
-using v64 = ss::vec<std::uint64_t, 4>; // 4 elements == 32 bytes
+// v64 (= vec<uint64_t, BYTES/8>) is defined in tier_ops.h.
+static constexpr int V64_LANES = SIMDUTF_STDSIMD_VEC_BYTES / 8;
 
 simdutf_really_inline v64 loadu64(const std::uint64_t *ptr) {
-  return ss::unchecked_load<v64>(ptr, 4, ss::flag_default);
+  return ss::unchecked_load<v64>(ptr, V64_LANES, ss::flag_default);
 }
 
 template <typename T> struct simd64;

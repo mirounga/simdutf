@@ -54,13 +54,14 @@ namespace SIMDUTF_IMPLEMENTATION {
 #if SIMDUTF_FEATURE_ASCII
 simdutf_warn_unused bool
 implementation::validate_ascii(const char *buf, size_t len) const noexcept {
-  return stdsimd::ascii_validation::generic_validate_ascii(buf, len);
+  return SIMDUTF_IMPLEMENTATION::ascii_validation::generic_validate_ascii(buf,
+                                                                          len);
 }
 
 simdutf_warn_unused result implementation::validate_ascii_with_errors(
     const char *buf, size_t len) const noexcept {
-  return stdsimd::ascii_validation::generic_validate_ascii_with_errors(buf,
-                                                                       len);
+  return SIMDUTF_IMPLEMENTATION::ascii_validation::
+      generic_validate_ascii_with_errors(buf, len);
 }
 #endif // SIMDUTF_FEATURE_ASCII
 

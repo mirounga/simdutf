@@ -240,14 +240,32 @@ static const lsx::implementation *get_lsx_singleton() {
 }
 #endif
 #if SIMDUTF_IMPLEMENTATION_STDSIMD
+  // Three FORCE-only tiers, one per namespace. Each class is fully declared in
+  // simdutf/stdsimd/implementation.h (included via simdutf/stdsimd.h), so the
+  // singletons can be constructed here in the primary TU even though each tier's
+  // method bodies live in its own per-march translation unit.
   #if SIMDUTF_USE_STATIC_INITIALIZATION
-static const stdsimd::implementation stdsimd_singleton{};
+static const stdsimd_sse::implementation stdsimd_sse_singleton{};
+static const stdsimd_avx2::implementation stdsimd_avx2_singleton{};
+static const stdsimd_avx512::implementation stdsimd_avx512_singleton{};
   #endif
-static const stdsimd::implementation *get_stdsimd_singleton() {
+static const stdsimd_sse::implementation *get_stdsimd_sse_singleton() {
   #if !SIMDUTF_USE_STATIC_INITIALIZATION
-  static const stdsimd::implementation stdsimd_singleton{};
+  static const stdsimd_sse::implementation stdsimd_sse_singleton{};
   #endif
-  return &stdsimd_singleton;
+  return &stdsimd_sse_singleton;
+}
+static const stdsimd_avx2::implementation *get_stdsimd_avx2_singleton() {
+  #if !SIMDUTF_USE_STATIC_INITIALIZATION
+  static const stdsimd_avx2::implementation stdsimd_avx2_singleton{};
+  #endif
+  return &stdsimd_avx2_singleton;
+}
+static const stdsimd_avx512::implementation *get_stdsimd_avx512_singleton() {
+  #if !SIMDUTF_USE_STATIC_INITIALIZATION
+  static const stdsimd_avx512::implementation stdsimd_avx512_singleton{};
+  #endif
+  return &stdsimd_avx512_singleton;
 }
 #endif
 #if SIMDUTF_IMPLEMENTATION_FALLBACK
@@ -937,7 +955,9 @@ static const std::initializer_list<const implementation *>
         get_lsx_singleton(),
   #endif
   #if SIMDUTF_IMPLEMENTATION_STDSIMD
-        get_stdsimd_singleton(),
+        get_stdsimd_avx512_singleton(),
+        get_stdsimd_avx2_singleton(),
+        get_stdsimd_sse_singleton(),
   #endif
   #if SIMDUTF_IMPLEMENTATION_FALLBACK
         get_fallback_singleton(),
@@ -974,7 +994,9 @@ get_available_implementation_pointers() {
           get_lsx_singleton(),
   #endif
   #if SIMDUTF_IMPLEMENTATION_STDSIMD
-          get_stdsimd_singleton(),
+          get_stdsimd_avx512_singleton(),
+          get_stdsimd_avx2_singleton(),
+          get_stdsimd_sse_singleton(),
   #endif
   #if SIMDUTF_IMPLEMENTATION_FALLBACK
           get_fallback_singleton(),

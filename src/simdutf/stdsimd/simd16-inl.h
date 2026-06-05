@@ -2,30 +2,27 @@
 // (anonymous)::simd). std::simd wrapper presenting haswell/simd16-inl.h's
 // interface over pinned-width vec<uint16_t,16>.
 
-using v16 = ss::vec<std::uint16_t, 16>; // 16 elements == 32 bytes
-using m16 = ss::mask<std::uint16_t, 16>;
-
-#if SIMDUTF_IS_X86_64
-simdutf_really_inline __m256i to_m256i(const v16 v) {
-  return std::bit_cast<__m256i>(v);
-}
-simdutf_really_inline v16 v16_from_m256i(const __m256i r) {
-  return std::bit_cast<v16>(r);
-}
-#endif
+// v16 / m16 (= vec<uint16_t, BYTES/2>) are defined in tier_ops.h. Number of
+// u16 lanes the vector holds:
+static constexpr int V16_LANES = SIMDUTF_STDSIMD_VEC_BYTES / 2;
 
 simdutf_really_inline v16 loadu16(const std::uint16_t *ptr) {
-  return ss::unchecked_load<v16>(ptr, 16, ss::flag_default);
+  return ss::unchecked_load<v16>(ptr, V16_LANES, ss::flag_default);
 }
 simdutf_really_inline void storeu16(const v16 v, std::uint16_t *ptr) {
-  ss::unchecked_store(v, ptr, 16, ss::flag_default);
+  ss::unchecked_store(v, ptr, V16_LANES, ss::flag_default);
 }
 
 template <typename T> struct simd16;
 
 template <typename T, typename Mask = simd16<bool>>
 struct base16 : base<simd16<T>> {
-  using bitmask_type = uint32_t;
+  // A single simd16<bool> spans SIMDUTF_STDSIMD_VEC_BYTES bytes, so its
+  // byte-movemask has that many bits: 16 (SSE) / 32 (AVX2) fit in uint32_t, but
+  // the AVX512 tier (64 bytes) needs all 64 bits. Using uint64_t for every tier
+  // avoids truncating the AVX512 single-chunk movemask (which made
+  // simd16x32::to_bitmask drop half its bits).
+  using bitmask_type = uint64_t;
 
   simdutf_really_inline base16() : base<simd16<T>>() {}
   // construct from the 8-bit-pinned storage of base<> via re-bitcast
@@ -67,18 +64,7 @@ template <> struct simd16<bool> : base16<bool> {
 
   simdutf_really_inline bitmask_type to_bitmask() const {
     // movemask over bytes: ESCAPE HATCH.
-#if SIMDUTF_IS_X86_64
-    return _mm256_movemask_epi8(to_m256i(this->v()));
-#else
-    // TODO(verify): portable scalar fallback.
-    alignas(32) std::uint8_t buf[32];
-    storeu8(this->value, buf);
-    uint32_t r = 0;
-    for (int i = 0; i < 32; i++) {
-      r |= (uint32_t(buf[i] >> 7) & 1u) << i;
-    }
-    return r;
-#endif
+    return bitmask_type(tier_movemask8(this->value));
   }
 
   simdutf_really_inline simd16<bool> operator~() const { return *this ^ true; }
@@ -91,7 +77,7 @@ template <typename T> struct base16_numeric : base16<T> {
 
   static simdutf_really_inline simd16<T> zero() { return v16{}; }
 
-  static simdutf_really_inline simd16<T> load(const T values[8]) {
+  static simdutf_really_inline simd16<T> load(const T values[V16_LANES]) {
     return loadu16(reinterpret_cast<const std::uint16_t *>(values));
   }
 
@@ -100,7 +86,7 @@ template <typename T> struct base16_numeric : base16<T> {
   simdutf_really_inline base16_numeric(const v16 _value) : base16<T>(_value) {}
 
   // Store to array
-  simdutf_really_inline void store(T dst[8]) const {
+  simdutf_really_inline void store(T dst[V16_LANES]) const {
     storeu16(this->v(), reinterpret_cast<std::uint16_t *>(dst));
   }
 
@@ -175,55 +161,21 @@ template <> struct simd16<uint16_t> : base16_numeric<uint16_t> {
 
   // Change the endianness: ESCAPE HATCH (byte shuffle).
   simdutf_really_inline simd16<uint16_t> swap_bytes() const {
-#if SIMDUTF_IS_X86_64
-    const __m256i swap = _mm256_setr_epi8(
-        1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, 17, 16, 19, 18,
-        21, 20, 23, 22, 25, 24, 27, 26, 29, 28, 31, 30);
-    return v16_from_m256i(_mm256_shuffle_epi8(to_m256i(this->v()), swap));
-#else
-    // TODO(verify): portable byteswap.
-    return v16((this->v() << 8) | (this->v() >> 8));
-#endif
+    return simd16<uint16_t>(tier_byteswap16(this->v()));
   }
 
   // Pack with the unsigned saturation of two uint16_t code units into single
   // uint8_t vector: ESCAPE HATCH (lane shuffle + packus).
   static simdutf_really_inline simd8<uint8_t> pack(const simd16<uint16_t> &v0,
                                                    const simd16<uint16_t> &v1) {
-#if SIMDUTF_IS_X86_64
-    const __m128i lo_0 = _mm256_extracti128_si256(to_m256i(v0.v()), 0);
-    const __m128i lo_1 = _mm256_extracti128_si256(to_m256i(v1.v()), 0);
-    const __m128i hi_0 = _mm256_extracti128_si256(to_m256i(v0.v()), 1);
-    const __m128i hi_1 = _mm256_extracti128_si256(to_m256i(v1.v()), 1);
-    const __m256i t0 =
-        _mm256_permute2f128_si256(_mm256_castsi128_si256(lo_0),
-                                  _mm256_castsi128_si256(lo_1), 0x20);
-    const __m256i t1 =
-        _mm256_permute2f128_si256(_mm256_castsi128_si256(hi_0),
-                                  _mm256_castsi128_si256(hi_1), 0x20);
-    return simd8<uint8_t>(from_m256i(_mm256_packus_epi16(t0, t1)));
-#else
-    // TODO(verify): portable saturating pack to bytes.
-    alignas(32) std::uint16_t a[16];
-    alignas(32) std::uint16_t b[16];
-    alignas(32) std::uint8_t out[32];
-    storeu16(v0.v(), a);
-    storeu16(v1.v(), b);
-    for (int i = 0; i < 16; i++)
-      out[i] = std::uint8_t(a[i] > 0xFF ? 0xFF : a[i]);
-    for (int i = 0; i < 16; i++)
-      out[16 + i] = std::uint8_t(b[i] > 0xFF ? 0xFF : b[i]);
-    return simd8<uint8_t>(loadu8(out));
-#endif
+    return simd8<uint8_t>(tier_pack16(v0.v(), v1.v()));
   }
 
   simdutf_really_inline uint64_t sum() const {
-    ss::vec<std::uint32_t, 8> acc{};
-    // widen-and-sum portably
-    alignas(32) std::uint16_t buf[16];
+    std::uint16_t buf[V16_LANES];
     storeu16(this->v(), buf);
     std::uint64_t s = 0;
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < V16_LANES; i++)
       s += buf[i];
     return s;
   }
@@ -231,8 +183,12 @@ template <> struct simd16<uint16_t> : base16_numeric<uint16_t> {
 
 template <typename T> struct simd16x32 {
   static constexpr int NUM_CHUNKS = 64 / sizeof(simd16<T>);
-  static_assert(NUM_CHUNKS == 2,
-                "stdsimd kernel should use two registers per 64-byte block.");
+  static_assert(NUM_CHUNKS == 64 / SIMDUTF_STDSIMD_VEC_BYTES,
+                "simd16x32 must tile a 64-byte block with the pinned width.");
+  // Each chunk contributes a byte-movemask of its underlying byte storage.
+  static constexpr int CHUNK_BITS = SIMDUTF_STDSIMD_VEC_BYTES;
+  static constexpr uint64_t CHUNK_MASK =
+      (CHUNK_BITS >= 64) ? ~uint64_t(0) : ((uint64_t(1) << CHUNK_BITS) - 1);
   simd16<T> chunks[NUM_CHUNKS];
 
   simd16x32(const simd16x32<T> &o) = delete; // no copy allowed
@@ -240,26 +196,40 @@ template <typename T> struct simd16x32 {
   operator=(const simd16<T> other) = delete; // no assignment allowed
   simd16x32() = delete;                      // no default constructor allowed
 
-  simdutf_really_inline simd16x32(const simd16<T> chunk0,
-                                  const simd16<T> chunk1)
-      : chunks{chunk0, chunk1} {}
-  simdutf_really_inline simd16x32(const T *ptr)
-      : chunks{simd16<T>::load(ptr),
-               simd16<T>::load(ptr + sizeof(simd16<T>) / sizeof(T))} {}
+  // Per-chunk constructor: exactly NUM_CHUNKS chunks (2 on AVX2, 4 on SSE,
+  // 1 on AVX512). Constrained to simd16<T> args so it never competes with the
+  // pointer constructor.
+  template <typename... Chunks>
+    requires(sizeof...(Chunks) == NUM_CHUNKS &&
+             (std::is_same_v<Chunks, simd16<T>> && ...))
+  simdutf_really_inline simd16x32(const Chunks... cs) : chunks{cs...} {}
+  simdutf_really_inline simd16x32(const T *ptr) {
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+      chunks[i] = simd16<T>::load(ptr + i * sizeof(simd16<T>) / sizeof(T));
+    }
+  }
 
   simdutf_really_inline void store(T *ptr) const {
-    this->chunks[0].store(ptr + sizeof(simd16<T>) * 0 / sizeof(T));
-    this->chunks[1].store(ptr + sizeof(simd16<T>) * 1 / sizeof(T));
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+      this->chunks[i].store(ptr + i * sizeof(simd16<T>) / sizeof(T));
+    }
   }
 
   simdutf_really_inline uint64_t to_bitmask() const {
-    uint64_t r_lo = uint32_t(this->chunks[0].to_bitmask());
-    uint64_t r_hi = this->chunks[1].to_bitmask();
-    return r_lo | (r_hi << 32);
+    uint64_t r = 0;
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+      r |= (uint64_t(this->chunks[i].to_bitmask()) & CHUNK_MASK)
+           << (CHUNK_BITS * i);
+    }
+    return r;
   }
 
   simdutf_really_inline simd16<T> reduce_or() const {
-    return this->chunks[0] | this->chunks[1];
+    simd16<T> r = this->chunks[0];
+    for (int i = 1; i < NUM_CHUNKS; i++) {
+      r = r | this->chunks[i];
+    }
+    return r;
   }
 
   simdutf_really_inline bool is_ascii() const {
@@ -267,37 +237,48 @@ template <typename T> struct simd16x32 {
   }
 
   simdutf_really_inline void store_ascii_as_utf16(char16_t *ptr) const {
-    this->chunks[0].store_ascii_as_utf16(ptr + sizeof(simd16<T>) * 0);
-    this->chunks[1].store_ascii_as_utf16(ptr + sizeof(simd16<T>));
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+      this->chunks[i].store_ascii_as_utf16(ptr + sizeof(simd16<T>) * i);
+    }
   }
 
   simdutf_really_inline void swap_bytes() {
-    this->chunks[0] = this->chunks[0].swap_bytes();
-    this->chunks[1] = this->chunks[1].swap_bytes();
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+      this->chunks[i] = this->chunks[i].swap_bytes();
+    }
   }
+
+  // Build a 64-bit bitmask by applying a per-chunk predicate returning a
+  // simd16<bool>; each chunk contributes CHUNK_BITS bits of byte-movemask.
+  template <typename Pred>
+  simdutf_really_inline uint64_t bitmask_of(Pred pred) const {
+    uint64_t r = 0;
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+      r |= (uint64_t(pred(this->chunks[i]).to_bitmask()) & CHUNK_MASK)
+           << (CHUNK_BITS * i);
+    }
+    return r;
+  }
+
   simdutf_really_inline uint64_t gt(const T m) const {
     const simd16<T> mask = simd16<T>::splat(m);
-    return simd16x32<bool>(this->chunks[0] > mask, this->chunks[1] > mask)
-        .to_bitmask();
+    return bitmask_of([&](const simd16<T> c) { return c > mask; });
   }
 
   simdutf_really_inline uint64_t lteq(const T m) const {
     const simd16<T> mask = simd16<T>::splat(m);
-    return simd16x32<bool>(this->chunks[0] <= mask, this->chunks[1] <= mask)
-        .to_bitmask();
+    return bitmask_of([&](const simd16<T> c) { return c <= mask; });
   }
   simdutf_really_inline uint64_t eq(const T m) const {
     const simd16<T> mask = simd16<T>::splat(m);
-    return simd16x32<bool>(this->chunks[0] == mask, this->chunks[1] == mask)
-        .to_bitmask();
+    return bitmask_of([&](const simd16<T> c) { return c == mask; });
   }
   simdutf_really_inline uint64_t not_in_range(const T low, const T high) const {
     const simd16<T> mask_low = simd16<T>::splat(static_cast<T>(low - 1));
     const simd16<T> mask_high = simd16<T>::splat(static_cast<T>(high + 1));
-    return simd16x32<bool>(
-               (this->chunks[0] >= mask_high) | (this->chunks[0] <= mask_low),
-               (this->chunks[1] >= mask_high) | (this->chunks[1] <= mask_low))
-        .to_bitmask();
+    return bitmask_of([&](const simd16<T> c) {
+      return (c >= mask_high) | (c <= mask_low);
+    });
   }
 }; // struct simd16x32<T>
 

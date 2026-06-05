@@ -3,336 +3,57 @@
 
 #include "simdutf/implementation.h"
 
-// The constructor may be executed on any host, so we take care not to use
-// SIMDUTF_TARGET_REGION
-namespace simdutf {
-namespace stdsimd {
+// The C++26 std::simd backend ships as THREE runtime-selectable tiers, each in
+// its own namespace and translation unit:
+//   - stdsimd_sse    : 128-bit std::simd, SSE4.2     ISA gate
+//   - stdsimd_avx2   : 256-bit std::simd, AVX2|BMI1|BMI2
+//   - stdsimd_avx512 : 512-bit std::simd, AVX512 F/BW/CD/DQ/VL/VBMI(/VBMI2)
+//
+// The implementation class declaration is identical for every tier except for
+// the namespace, the name() string and the ISA bitmask passed to the base
+// constructor. We therefore declare ALL THREE classes here by re-including the
+// parameterized body (implementation_body.inc.h) once per tier with the right
+// macros, so that whichever TU pulls this header sees every tier's declaration
+// (the registration in implementation.cpp needs all three). The constructor may
+// run on any host, so this header must stay OUTSIDE any SIMDUTF_TARGET_REGION.
 
-using namespace simdutf;
+// ---- SSE tier (stdsimd_sse) ------------------------------------------------
+#define SIMDUTF_STDSIMD_BODY_NS stdsimd_sse
+#define SIMDUTF_STDSIMD_BODY_NAME "stdsimd_sse"
+#define SIMDUTF_STDSIMD_BODY_ISA internal::instruction_set::SSE42
+#include "simdutf/stdsimd/implementation_body.inc.h"
+#undef SIMDUTF_STDSIMD_BODY_NS
+#undef SIMDUTF_STDSIMD_BODY_NAME
+#undef SIMDUTF_STDSIMD_BODY_ISA
 
-class implementation final : public simdutf::implementation {
-public:
-  simdutf_really_inline implementation()
-      : simdutf::implementation("stdsimd", "C++26 std::simd backend (AVX2 tier)",
-                                internal::instruction_set::AVX2 |
-                                    internal::instruction_set::BMI1 |
-                                    internal::instruction_set::BMI2) {}
+// ---- AVX2 tier (stdsimd_avx2) ----------------------------------------------
+#define SIMDUTF_STDSIMD_BODY_NS stdsimd_avx2
+#define SIMDUTF_STDSIMD_BODY_NAME "stdsimd_avx2"
+#define SIMDUTF_STDSIMD_BODY_ISA                                               \
+  (internal::instruction_set::AVX2 | internal::instruction_set::BMI1 |         \
+   internal::instruction_set::BMI2)
+#include "simdutf/stdsimd/implementation_body.inc.h"
+#undef SIMDUTF_STDSIMD_BODY_NS
+#undef SIMDUTF_STDSIMD_BODY_NAME
+#undef SIMDUTF_STDSIMD_BODY_ISA
 
-#if SIMDUTF_FEATURE_DETECT_ENCODING
-  simdutf_warn_unused int detect_encodings(const char *input,
-                                           size_t length) const noexcept final;
-#endif // SIMDUTF_FEATURE_DETECT_ENCODING
-
-#if SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
-  simdutf_warn_unused bool validate_utf8(const char *buf,
-                                         size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8 || SIMDUTF_FEATURE_DETECT_ENCODING
-
-#if SIMDUTF_FEATURE_UTF8
-  simdutf_warn_unused result
-  validate_utf8_with_errors(const char *buf, size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8
-
-#if SIMDUTF_FEATURE_ASCII
-  simdutf_warn_unused bool validate_ascii(const char *buf,
-                                          size_t len) const noexcept final;
-  simdutf_warn_unused result
-  validate_ascii_with_errors(const char *buf, size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_ASCII
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_ASCII
-  simdutf_warn_unused bool
-  validate_utf16le_as_ascii(const char16_t *buf,
-                            size_t len) const noexcept final;
-
-  simdutf_warn_unused bool
-  validate_utf16be_as_ascii(const char16_t *buf,
-                            size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_ASCII
-
-#if SIMDUTF_FEATURE_UTF16 || SIMDUTF_FEATURE_DETECT_ENCODING
-  simdutf_warn_unused bool validate_utf16le(const char16_t *buf,
-                                            size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF16 || SIMDUTF_FEATURE_DETECT_ENCODING
-
-#if SIMDUTF_FEATURE_UTF16
-  simdutf_warn_unused bool validate_utf16be(const char16_t *buf,
-                                            size_t len) const noexcept final;
-  simdutf_warn_unused result validate_utf16le_with_errors(
-      const char16_t *buf, size_t len) const noexcept final;
-  simdutf_warn_unused result validate_utf16be_with_errors(
-      const char16_t *buf, size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF16
-
-#if SIMDUTF_FEATURE_UTF32 || SIMDUTF_FEATURE_DETECT_ENCODING
-  simdutf_warn_unused bool validate_utf32(const char32_t *buf,
-                                          size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF32 || SIMDUTF_FEATURE_DETECT_ENCODING
-
-#if SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused result validate_utf32_with_errors(
-      const char32_t *buf, size_t len) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t convert_latin1_to_utf8(
-      const char *buf, size_t len, char *utf8_output) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t convert_latin1_to_utf16le(
-      const char *buf, size_t len, char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_latin1_to_utf16be(
-      const char *buf, size_t len, char16_t *utf16_buffer) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t convert_latin1_to_utf32(
-      const char *buf, size_t len, char32_t *utf32_output) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t convert_utf8_to_latin1(
-      const char *buf, size_t len, char *latin1_output) const noexcept final;
-  simdutf_warn_unused result convert_utf8_to_latin1_with_errors(
-      const char *buf, size_t len, char *latin1_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf8_to_latin1(
-      const char *buf, size_t len, char *latin1_output) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-  simdutf_warn_unused size_t convert_utf8_to_utf16le(
-      const char *buf, size_t len, char16_t *utf16_output) const noexcept final;
-  simdutf_warn_unused size_t convert_utf8_to_utf16be(
-      const char *buf, size_t len, char16_t *utf16_output) const noexcept final;
-  simdutf_warn_unused result convert_utf8_to_utf16le_with_errors(
-      const char *buf, size_t len, char16_t *utf16_output) const noexcept final;
-  simdutf_warn_unused result convert_utf8_to_utf16be_with_errors(
-      const char *buf, size_t len, char16_t *utf16_output) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf8_to_utf16le(
-      const char *buf, size_t len, char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf8_to_utf16be(
-      const char *buf, size_t len, char16_t *utf16_buffer) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused size_t convert_utf8_to_utf32(
-      const char *buf, size_t len, char32_t *utf32_output) const noexcept final;
-  simdutf_warn_unused result convert_utf8_to_utf32_with_errors(
-      const char *buf, size_t len, char32_t *utf32_output) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf8_to_utf32(
-      const char *buf, size_t len, char32_t *utf32_buffer) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t
-  convert_utf16le_to_latin1(const char16_t *buf, size_t len,
-                            char *latin1_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_utf16be_to_latin1(const char16_t *buf, size_t len,
-                            char *latin1_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16le_to_latin1_with_errors(
-      const char16_t *buf, size_t len,
-      char *latin1_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16be_to_latin1_with_errors(
-      const char16_t *buf, size_t len,
-      char *latin1_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_valid_utf16le_to_latin1(const char16_t *buf, size_t len,
-                                  char *latin1_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_valid_utf16be_to_latin1(const char16_t *buf, size_t len,
-                                  char *latin1_buffer) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-  simdutf_warn_unused size_t convert_utf16le_to_utf8(
-      const char16_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf16be_to_utf8(
-      const char16_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16le_to_utf8_with_errors(
-      const char16_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16be_to_utf8_with_errors(
-      const char16_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf16le_to_utf8(
-      const char16_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf16be_to_utf8(
-      const char16_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused size_t convert_utf32_to_utf8(
-      const char32_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf32_to_utf8_with_errors(
-      const char32_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf32_to_utf8(
-      const char32_t *buf, size_t len, char *utf8_buffer) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t
-  convert_utf32_to_latin1(const char32_t *buf, size_t len,
-                          char *latin1_output) const noexcept final;
-  simdutf_warn_unused result
-  convert_utf32_to_latin1_with_errors(const char32_t *buf, size_t len,
-                                      char *latin1_output) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_valid_utf32_to_latin1(const char32_t *buf, size_t len,
-                                char *latin1_output) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused size_t
-  convert_utf32_to_utf16le(const char32_t *buf, size_t len,
-                           char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_utf32_to_utf16be(const char32_t *buf, size_t len,
-                           char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf32_to_utf16le_with_errors(
-      const char32_t *buf, size_t len,
-      char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf32_to_utf16be_with_errors(
-      const char32_t *buf, size_t len,
-      char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_valid_utf32_to_utf16le(const char32_t *buf, size_t len,
-                                 char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_valid_utf32_to_utf16be(const char32_t *buf, size_t len,
-                                 char16_t *utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_utf16le_to_utf32(const char16_t *buf, size_t len,
-                           char32_t *utf32_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_utf16be_to_utf32(const char16_t *buf, size_t len,
-                           char32_t *utf32_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16le_to_utf32_with_errors(
-      const char16_t *buf, size_t len,
-      char32_t *utf32_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16be_to_utf32_with_errors(
-      const char16_t *buf, size_t len,
-      char32_t *utf32_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_valid_utf16le_to_utf32(const char16_t *buf, size_t len,
-                                 char32_t *utf32_buffer) const noexcept final;
-  simdutf_warn_unused size_t
-  convert_valid_utf16be_to_utf32(const char16_t *buf, size_t len,
-                                 char32_t *utf32_buffer) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF16
-  void change_endianness_utf16(const char16_t *buf, size_t length,
-                               char16_t *output) const noexcept final;
-  simdutf_warn_unused size_t
-  count_utf16le(const char16_t *buf, size_t length) const noexcept override;
-  simdutf_warn_unused size_t
-  count_utf16be(const char16_t *buf, size_t length) const noexcept override;
-  void to_well_formed_utf16be(const char16_t *input, size_t len,
-                              char16_t *output) const noexcept final;
-  void to_well_formed_utf16le(const char16_t *input, size_t len,
-                              char16_t *output) const noexcept final;
-#endif // SIMDUTF_FEATURE_UTF16
-
-#if SIMDUTF_FEATURE_UTF8
-  simdutf_warn_unused size_t count_utf8(const char *buf,
-                                        size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF8
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-  simdutf_warn_unused size_t utf8_length_from_utf16le(
-      const char16_t *input, size_t length) const noexcept override;
-  simdutf_warn_unused size_t utf8_length_from_utf16be(
-      const char16_t *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused size_t utf32_length_from_utf16le(
-      const char16_t *input, size_t length) const noexcept override;
-  simdutf_warn_unused size_t utf32_length_from_utf16be(
-      const char16_t *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-  simdutf_warn_unused size_t utf16_length_from_utf8(
-      const char *input, size_t length) const noexcept override;
-  simdutf_warn_unused result utf8_length_from_utf16le_with_replacement(
-      const char16_t *input, size_t length) const noexcept override;
-  ;
-  simdutf_warn_unused result utf8_length_from_utf16be_with_replacement(
-      const char16_t *input, size_t length) const noexcept override;
-  ;
-
-  simdutf_warn_unused size_t convert_utf16le_to_utf8_with_replacement(
-      const char16_t *input, size_t length,
-      char *utf8_buffer) const noexcept override;
-
-  simdutf_warn_unused size_t convert_utf16be_to_utf8_with_replacement(
-      const char16_t *input, size_t length,
-      char *utf8_buffer) const noexcept override;
-
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF16
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused size_t utf8_length_from_utf32(
-      const char32_t *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused size_t utf16_length_from_utf32(
-      const char32_t *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-  simdutf_warn_unused size_t utf32_length_from_utf8(
-      const char *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t latin1_length_from_utf8(
-      const char *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-  simdutf_warn_unused size_t utf8_length_from_latin1(
-      const char *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_BASE64
-  simdutf_warn_unused result base64_to_binary(
-      const char *input, size_t length, char *output, base64_options options,
-      last_chunk_handling_options last_chunk_options =
-          last_chunk_handling_options::loose) const noexcept override;
-  simdutf_warn_unused full_result base64_to_binary_details(
-      const char *input, size_t length, char *output, base64_options options,
-      last_chunk_handling_options last_chunk_options =
-          last_chunk_handling_options::loose) const noexcept override;
-  simdutf_warn_unused result base64_to_binary(
-      const char16_t *input, size_t length, char *output,
-      base64_options options,
-      last_chunk_handling_options last_chunk_options =
-          last_chunk_handling_options::loose) const noexcept override;
-  simdutf_warn_unused full_result base64_to_binary_details(
-      const char16_t *input, size_t length, char *output,
-      base64_options options,
-      last_chunk_handling_options last_chunk_options =
-          last_chunk_handling_options::loose) const noexcept override;
-  size_t binary_to_base64(const char *input, size_t length, char *output,
-                          base64_options options) const noexcept override;
-  size_t
-  binary_to_base64_with_lines(const char *input, size_t length, char *output,
-                              size_t line_length,
-                              base64_options options) const noexcept override;
-  const char *find(const char *start, const char *end,
-                   char character) const noexcept override;
-  const char16_t *find(const char16_t *start, const char16_t *end,
-                       char16_t character) const noexcept override;
-  simdutf_warn_unused size_t binary_length_from_base64(
-      const char *input, size_t length) const noexcept override;
-  simdutf_warn_unused size_t binary_length_from_base64(
-      const char16_t *input, size_t length) const noexcept override;
-#endif // SIMDUTF_FEATURE_BASE64
-};
-
-} // namespace stdsimd
-} // namespace simdutf
+// ---- AVX512 tier (stdsimd_avx512) ------------------------------------------
+#define SIMDUTF_STDSIMD_BODY_NS stdsimd_avx512
+#define SIMDUTF_STDSIMD_BODY_NAME "stdsimd_avx512"
+// Mirror the icelake gate (same AVX-512 instruction family: vbmi/vbmi2
+// permute/multishift/compress). The enum has no separate AVX512VBMI bit, so we
+// gate on VBMI2 (which on every shipping uarch implies VBMI) plus the icelake
+// set. AVX512F is implied by BW/CD/DQ/VL but listed for clarity where present.
+#define SIMDUTF_STDSIMD_BODY_ISA                                               \
+  (internal::instruction_set::AVX2 | internal::instruction_set::BMI1 |         \
+   internal::instruction_set::BMI2 | internal::instruction_set::AVX512F |      \
+   internal::instruction_set::AVX512BW | internal::instruction_set::AVX512CD | \
+   internal::instruction_set::AVX512DQ | internal::instruction_set::AVX512VL | \
+   internal::instruction_set::AVX512VBMI2 |                                    \
+   internal::instruction_set::AVX512VPOPCNTDQ)
+#include "simdutf/stdsimd/implementation_body.inc.h"
+#undef SIMDUTF_STDSIMD_BODY_NS
+#undef SIMDUTF_STDSIMD_BODY_NAME
+#undef SIMDUTF_STDSIMD_BODY_ISA
 
 #endif // SIMDUTF_STDSIMD_IMPLEMENTATION_H

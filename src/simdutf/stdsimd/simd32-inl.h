@@ -1,11 +1,11 @@
 // part of simd.h. std::simd wrapper presenting haswell/simd32-inl.h's interface
 // over pinned-width vec<uint32_t,8>.
 
-using v32 = ss::vec<std::uint32_t, 8>; // 8 elements == 32 bytes
-using m32 = ss::mask<std::uint32_t, 8>;
+// v32 / m32 (= vec<uint32_t, BYTES/4>) are defined in tier_ops.h.
+static constexpr int V32_LANES = SIMDUTF_STDSIMD_VEC_BYTES / 4;
 
 simdutf_really_inline v32 loadu32(const std::uint32_t *ptr) {
-  return ss::unchecked_load<v32>(ptr, 8, ss::flag_default);
+  return ss::unchecked_load<v32>(ptr, V32_LANES, ss::flag_default);
 }
 
 template <typename T> struct simd32;
@@ -23,29 +23,17 @@ template <> struct simd32<uint32_t> {
       : value(loadu32(reinterpret_cast<const std::uint32_t *>(ptr))) {}
 
   simdutf_really_inline uint64_t sum() const {
-    alignas(32) std::uint32_t buf[8];
-    ss::unchecked_store(value, buf, 8, ss::flag_default);
+    std::uint32_t buf[V32_LANES];
+    ss::unchecked_store(value, buf, V32_LANES, ss::flag_default);
     std::uint64_t s = 0;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < V32_LANES; i++)
       s += buf[i];
     return s;
   }
 
   // Change the endianness: ESCAPE HATCH (byte shuffle).
   simdutf_really_inline simd32<uint32_t> swap_bytes() const {
-#if SIMDUTF_IS_X86_64
-    const __m256i shuffle =
-        _mm256_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 8, 9, 10, 11, 15, 14, 13, 12,
-                         3, 2, 1, 0, 7, 6, 5, 4, 8, 9, 10, 11, 15, 14, 13, 12);
-    return std::bit_cast<v32>(
-        _mm256_shuffle_epi8(std::bit_cast<__m256i>(value), shuffle));
-#else
-    // TODO(verify): portable 32-bit byteswap.
-    return v32(((value & v32(0x000000FFu)) << 24) |
-               ((value & v32(0x0000FF00u)) << 8) |
-               ((value & v32(0x00FF0000u)) >> 8) |
-               ((value & v32(0xFF000000u)) >> 24));
-#endif
+    return simd32<uint32_t>(tier_byteswap32(value));
   }
 
   // operators

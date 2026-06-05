@@ -29,12 +29,14 @@
 } // namespace SIMDUTF_IMPLEMENTATION (temporarily)
 } // namespace simdutf (temporarily)
 
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
+#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32 &&                           \
+    SIMDUTF_STDSIMD_AVX2_KERNELS
 
 // --- anonymous-namespace sources (escape-hatch intrinsic kernels) ------------
 // Both kernels keep the x86 AVX2/SSE intrinsics: they have no portable
-// std::simd form on this tier. They are emitted in the backend's anonymous
-// namespace, exactly like the utf8_utf16 family does for its adapted kernel.
+// std::simd form on this tier (256-bit, AVX2 tier only). They are emitted in
+// the backend's anonymous namespace, exactly like the utf8_utf16 family does for
+// its adapted kernel. SSE/AVX512 tiers route this family to scalar below.
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 namespace {
@@ -46,13 +48,18 @@ using namespace simd;
 } // namespace SIMDUTF_IMPLEMENTATION
 } // namespace simdutf
 
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
+// clang-format off
+#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32 && SIMDUTF_STDSIMD_AVX2_KERNELS
+// clang-format on
 
 // ---- reopen simdutf::SIMDUTF_IMPLEMENTATION for the rest of the TU. ----------
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 
 #if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
+
+#if SIMDUTF_STDSIMD_AVX2_KERNELS
+// ===== AVX2 tier: real SIMD (adapted 256-bit kernels + scalar tail). =========
 
 // ===========================================================================
 // utf32 -> utf16  (adapted avx2_convert_utf32_to_utf16 kernel + scalar tail)
@@ -263,4 +270,81 @@ simdutf_warn_unused size_t implementation::convert_valid_utf16be_to_utf32(
     const char16_t *buf, size_t len, char32_t *utf32_output) const noexcept {
   return convert_utf16be_to_utf32(buf, len, utf32_output);
 }
+
+#else // !SIMDUTF_STDSIMD_AVX2_KERNELS
+// ===== SSE / AVX512 tiers: delegate utf16<->utf32 to scalar (same as fallback).
+
+simdutf_warn_unused size_t implementation::convert_utf32_to_utf16le(
+    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
+  return scalar::utf32_to_utf16::convert<endianness::LITTLE>(buf, len,
+                                                             utf16_output);
+}
+
+simdutf_warn_unused size_t implementation::convert_utf32_to_utf16be(
+    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
+  return scalar::utf32_to_utf16::convert<endianness::BIG>(buf, len,
+                                                          utf16_output);
+}
+
+simdutf_warn_unused result implementation::convert_utf32_to_utf16le_with_errors(
+    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
+  return scalar::utf32_to_utf16::convert_with_errors<endianness::LITTLE>(
+      buf, len, utf16_output);
+}
+
+simdutf_warn_unused result implementation::convert_utf32_to_utf16be_with_errors(
+    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
+  return scalar::utf32_to_utf16::convert_with_errors<endianness::BIG>(
+      buf, len, utf16_output);
+}
+
+simdutf_warn_unused size_t implementation::convert_valid_utf32_to_utf16le(
+    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
+  return scalar::utf32_to_utf16::convert_valid<endianness::LITTLE>(
+      buf, len, utf16_output);
+}
+
+simdutf_warn_unused size_t implementation::convert_valid_utf32_to_utf16be(
+    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
+  return scalar::utf32_to_utf16::convert_valid<endianness::BIG>(buf, len,
+                                                                utf16_output);
+}
+
+simdutf_warn_unused size_t implementation::convert_utf16le_to_utf32(
+    const char16_t *buf, size_t len, char32_t *utf32_output) const noexcept {
+  return scalar::utf16_to_utf32::convert<endianness::LITTLE>(buf, len,
+                                                             utf32_output);
+}
+
+simdutf_warn_unused size_t implementation::convert_utf16be_to_utf32(
+    const char16_t *buf, size_t len, char32_t *utf32_output) const noexcept {
+  return scalar::utf16_to_utf32::convert<endianness::BIG>(buf, len,
+                                                          utf32_output);
+}
+
+simdutf_warn_unused result implementation::convert_utf16le_to_utf32_with_errors(
+    const char16_t *buf, size_t len, char32_t *utf32_output) const noexcept {
+  return scalar::utf16_to_utf32::convert_with_errors<endianness::LITTLE>(
+      buf, len, utf32_output);
+}
+
+simdutf_warn_unused result implementation::convert_utf16be_to_utf32_with_errors(
+    const char16_t *buf, size_t len, char32_t *utf32_output) const noexcept {
+  return scalar::utf16_to_utf32::convert_with_errors<endianness::BIG>(
+      buf, len, utf32_output);
+}
+
+simdutf_warn_unused size_t implementation::convert_valid_utf16le_to_utf32(
+    const char16_t *buf, size_t len, char32_t *utf32_output) const noexcept {
+  return scalar::utf16_to_utf32::convert_valid<endianness::LITTLE>(
+      buf, len, utf32_output);
+}
+
+simdutf_warn_unused size_t implementation::convert_valid_utf16be_to_utf32(
+    const char16_t *buf, size_t len, char32_t *utf32_output) const noexcept {
+  return scalar::utf16_to_utf32::convert_valid<endianness::BIG>(buf, len,
+                                                                utf32_output);
+}
+
+#endif // SIMDUTF_STDSIMD_AVX2_KERNELS
 #endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32

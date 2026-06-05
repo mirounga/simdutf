@@ -53,7 +53,8 @@ namespace {
 simdutf_really_inline size_t
 stdsimd_utf8_length_from_latin1(const char *input, size_t len) {
   const uint8_t *data = reinterpret_cast<const uint8_t *>(input);
-    #if SIMDUTF_IS_X86_64
+    // 256-bit kernel: AVX2 tier only. SSE/AVX512 tiers fall through to scalar.
+    #if SIMDUTF_STDSIMD_AVX2_KERNELS
   size_t answer = len / sizeof(__m256i) * sizeof(__m256i);
   size_t i = 0;
   if (answer >= 2048) { // long strings optimization
@@ -105,17 +106,18 @@ stdsimd_utf8_length_from_latin1(const char *input, size_t len) {
   }
   return answer + scalar::latin1::utf8_length_from_latin1(
                       reinterpret_cast<const char *>(data + i), len - i);
-    #else  // SIMDUTF_IS_X86_64
+    #else  // !SIMDUTF_STDSIMD_AVX2_KERNELS
   return scalar::latin1::utf8_length_from_latin1(
       reinterpret_cast<const char *>(data), len);
-    #endif // SIMDUTF_IS_X86_64
+    #endif // SIMDUTF_STDSIMD_AVX2_KERNELS
 }
   #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 
   #if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
 simdutf_really_inline size_t
 stdsimd_utf16_length_from_utf32(const char32_t *input, size_t length) {
-    #if SIMDUTF_IS_X86_64
+    // 256-bit kernel: AVX2 tier only. SSE/AVX512 tiers fall through to scalar.
+    #if SIMDUTF_STDSIMD_AVX2_KERNELS
   const __m256i v_00000000 = _mm256_setzero_si256();
   const __m256i v_ffff0000 = _mm256_set1_epi32((uint32_t)0xffff0000);
   size_t pos = 0;
@@ -131,16 +133,17 @@ stdsimd_utf16_length_from_utf32(const char32_t *input, size_t length) {
   }
   return count +
          scalar::utf32::utf16_length_from_utf32(input + pos, length - pos);
-    #else  // SIMDUTF_IS_X86_64
+    #else  // !SIMDUTF_STDSIMD_AVX2_KERNELS
   return scalar::utf32::utf16_length_from_utf32(input, length);
-    #endif // SIMDUTF_IS_X86_64
+    #endif // SIMDUTF_STDSIMD_AVX2_KERNELS
 }
   #endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
 
 } // unnamed namespace
 } // namespace SIMDUTF_IMPLEMENTATION
 } // namespace simdutf
-#endif // latin1-from-utf8 || utf16-from-utf32 kernels
+#endif // (SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1) ||
+       // (SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32)
 
 // --- generic count/length algorithm headers (reused VERBATIM) ----------------
 // These mirror exactly which headers haswell/implementation.cpp pulls in.
