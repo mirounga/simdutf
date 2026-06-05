@@ -96,6 +96,23 @@ if(SIMDUTF_ALWAYS_INCLUDE_FALLBACK)
   target_compile_definitions(simdutf PRIVATE SIMDUTF_IMPLEMENTATION_FALLBACK=1)
 endif()
 
+# Additive C++26 std::simd backend ("stdsimd"). FORCE-only; reachable via
+# SIMDUTF_FORCE_IMPLEMENTATION=stdsimd. Requires GCC 16+ and C++26 (the
+# toolchain gating lives in cmake/simdutf-flags.cmake).
+if(SIMDUTF_IMPLEMENTATION_STDSIMD)
+  message(STATUS "SIMDUTF_IMPLEMENTATION_STDSIMD is ON: building the C++26 std::simd backend.")
+  target_compile_definitions(simdutf PRIVATE SIMDUTF_IMPLEMENTATION_STDSIMD=1)
+  target_compile_features(simdutf PRIVATE cxx_std_26)
+  # The std::simd backend is compiled in its own TU with an AVX2 command-line
+  # baseline so that std::simd's vec<uint8_t,32> uses the YMM register ABI rather
+  # than the no-AVX memory ABI the target-pragma alone leaves in place (which
+  # made validate_utf8 ~16x slower). This file emits ONLY the stdsimd backend
+  # (SIMDUTF_STDSIMD_ONLY); the rest of the library stays in simdutf.cpp.
+  target_sources(simdutf PRIVATE simdutf_stdsimd.cpp)
+  set_source_files_properties(simdutf_stdsimd.cpp PROPERTIES
+    COMPILE_OPTIONS "-mavx2;-mbmi;-mbmi2;-mlzcnt")
+endif()
+
 include(CheckCXXCompilerFlag)
 include(CheckLinkerFlag)
 

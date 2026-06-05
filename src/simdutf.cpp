@@ -1,7 +1,19 @@
 #include "simdutf.h"
 
-#include "encoding_types.cpp"
-#include "error.cpp"
+// The std::simd backend is compiled in its OWN translation unit (this same file
+// re-included with SIMDUTF_STDSIMD_ONLY=1) using an AVX2 *command-line* baseline,
+// so that std::simd's vec<uint8_t,32> gets the YMM register calling convention
+// instead of the memory ABI the per-function target pragma leaves in place. In
+// that mode we emit ONLY the stdsimd implementation; the dispatcher, the other
+// backends and the C API stay in the primary TU. See [[stdsimd-validate-perf]].
+#ifndef SIMDUTF_STDSIMD_ONLY
+  #define SIMDUTF_STDSIMD_ONLY 0
+#endif
+
+#if !SIMDUTF_STDSIMD_ONLY
+  #include "encoding_types.cpp"
+  #include "error.cpp"
+#endif
 // The large tables should be included once and they
 // should not depend on a kernel.
 #include "tables/utf8_to_utf16_tables.h"
@@ -25,6 +37,7 @@ SIMDUTF_DISABLE_UNUSED_WARNING
 #include "simdutf/rvv.h"
 #include "simdutf/lasx.h"
 #include "simdutf/lsx.h"
+#include "simdutf/stdsimd.h"
 #include "simdutf/fallback.h" // have it always last.
 #ifndef SIMDUTF_REGULAR_VISUAL_STUDIO
 SIMDUTF_POP_DISABLE_WARNINGS
@@ -115,38 +128,49 @@ SIMDUTF_POP_DISABLE_WARNINGS
   #include "simdutf/scalar/utf32_to_latin1/valid_utf32_to_latin1.h"
 #endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
 
-#include "implementation.cpp"
+#if !SIMDUTF_STDSIMD_ONLY
+  #include "implementation.cpp"
+#endif
 
 SIMDUTF_PUSH_DISABLE_WARNINGS
 SIMDUTF_DISABLE_UNDESIRED_WARNINGS
 
-#if SIMDUTF_IMPLEMENTATION_ARM64
-  #include "arm64/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_FALLBACK
-  #include "fallback/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_ICELAKE
-  #include "icelake/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_HASWELL
-  #include "haswell/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_PPC64
-  #include "ppc64/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_RVV
-  #include "rvv/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_WESTMERE
-  #include "westmere/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_LASX
-  #include "lasx/implementation.cpp"
-#endif
-#if SIMDUTF_IMPLEMENTATION_LSX
-  #include "lsx/implementation.cpp"
+#if !SIMDUTF_STDSIMD_ONLY
+  #if SIMDUTF_IMPLEMENTATION_ARM64
+    #include "arm64/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_FALLBACK
+    #include "fallback/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_ICELAKE
+    #include "icelake/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_HASWELL
+    #include "haswell/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_PPC64
+    #include "ppc64/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_RVV
+    #include "rvv/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_WESTMERE
+    #include "westmere/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_LASX
+    #include "lasx/implementation.cpp"
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_LSX
+    #include "lsx/implementation.cpp"
+  #endif
+#endif // !SIMDUTF_STDSIMD_ONLY
+
+// stdsimd lives ONLY in its dedicated AVX2-baseline TU (SIMDUTF_STDSIMD_ONLY).
+#if SIMDUTF_IMPLEMENTATION_STDSIMD && SIMDUTF_STDSIMD_ONLY
+  #include "stdsimd/implementation.cpp"
 #endif
 
-#include "simdutf_c.cpp"
+#if !SIMDUTF_STDSIMD_ONLY
+  #include "simdutf_c.cpp"
+#endif
 SIMDUTF_POP_DISABLE_WARNINGS

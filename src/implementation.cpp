@@ -239,6 +239,17 @@ static const lsx::implementation *get_lsx_singleton() {
   return &lsx_singleton;
 }
 #endif
+#if SIMDUTF_IMPLEMENTATION_STDSIMD
+  #if SIMDUTF_USE_STATIC_INITIALIZATION
+static const stdsimd::implementation stdsimd_singleton{};
+  #endif
+static const stdsimd::implementation *get_stdsimd_singleton() {
+  #if !SIMDUTF_USE_STATIC_INITIALIZATION
+  static const stdsimd::implementation stdsimd_singleton{};
+  #endif
+  return &stdsimd_singleton;
+}
+#endif
 #if SIMDUTF_IMPLEMENTATION_FALLBACK
   #if SIMDUTF_USE_STATIC_INITIALIZATION
 static const fallback::implementation fallback_singleton{};
@@ -925,6 +936,9 @@ static const std::initializer_list<const implementation *>
   #if SIMDUTF_IMPLEMENTATION_LSX
         get_lsx_singleton(),
   #endif
+  #if SIMDUTF_IMPLEMENTATION_STDSIMD
+        get_stdsimd_singleton(),
+  #endif
   #if SIMDUTF_IMPLEMENTATION_FALLBACK
         get_fallback_singleton(),
   #endif
@@ -958,6 +972,9 @@ get_available_implementation_pointers() {
   #endif
   #if SIMDUTF_IMPLEMENTATION_LSX
           get_lsx_singleton(),
+  #endif
+  #if SIMDUTF_IMPLEMENTATION_STDSIMD
+          get_stdsimd_singleton(),
   #endif
   #if SIMDUTF_IMPLEMENTATION_FALLBACK
           get_fallback_singleton(),
