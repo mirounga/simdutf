@@ -209,15 +209,9 @@ size_t implementation::binary_to_base64_with_lines(
   }
 }
 
-const char *implementation::find(const char *start, const char *end,
-                                 char character) const noexcept {
-  return util::find(start, end, character);
-}
-
-const char16_t *implementation::find(const char16_t *start, const char16_t *end,
-                                     char16_t character) const noexcept {
-  return util::find(start, end, character);
-}
+// NOTE: the find() family was moved to stdsimd/impl_find.inc.cpp so the find
+// Port agent owns a dedicated partial; it is included separately from
+// implementation.cpp.
 
 simdutf_warn_unused size_t implementation::binary_length_from_base64(
     const char *input, size_t length) const noexcept {

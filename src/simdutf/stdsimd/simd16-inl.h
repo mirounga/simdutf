@@ -122,6 +122,11 @@ template <> struct simd16<uint16_t> : base16_numeric<uint16_t> {
   simdutf_really_inline simd16() : base16_numeric<uint16_t>() {}
   simdutf_really_inline simd16(const v16 _value)
       : base16_numeric<uint16_t>(_value) {}
+  // From a boolean mask: per-lane 0xFFFF/0x0000 (mirrors haswell where
+  // simd16<uint16_t> accepts the __m256i mask). Needed by
+  // generic/utf16/utf8_length_from_utf16_bytemask.h.
+  simdutf_really_inline simd16(const simd16<bool> other)
+      : base16_numeric<uint16_t>(other.v()) {}
 
   // Splat constructor
   simdutf_really_inline simd16(uint16_t _value) : simd16(splat(_value)) {}
