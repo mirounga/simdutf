@@ -1,36 +1,29 @@
-// ==== stdsimd utf32 -> utf8 conversion (adapted from haswell) ====
+// ==== stdsimd utf32 -> utf8 conversion (tier-selected arch kernel) ====
 //
-// There is no backend-agnostic generic header for the AVX2 utf32->utf8 path,
-// so this file is adapted from src/haswell/avx2_convert_utf32_to_utf8.cpp.
+// The utf32->utf8 bulk transcoder is a width-specific intrinsic kernel (packs
+// UTF-32 -> UTF-16 with unsigned saturation, then runs the table-driven
+// pshufb / movemask / maddubs byte-compression path) with no portable std::simd
+// form and no backend-agnostic generic header. Rather than carry a copy, we
+// reuse the existing arch kernels per tier and alias them to a uniform name:
+//   * SSE tier (128-bit):        westmere/sse_convert_utf32_to_utf8.cpp
+//   * AVX2/AVX512 tiers (256b):  haswell/avx2_convert_utf32_to_utf8.cpp
+//     (AVX-512 implies AVX2, so the 256-bit kernel runs there too; a native
+//      512-bit icelake-style kernel would be a further optimization.)
 //
-// Per the stdsimd escape-hatch policy, the operations used here have no
-// portable std::simd form: the algorithm packs UTF-32 -> UTF-16 with unsigned
-// saturation (packus), then runs the UTF-16 -> UTF-8 byte-compression path,
-// which is driven by pshufb with per-128-lane shuffles selected from
-// tables::utf16_to_utf8::pack_1_2{,_3}_utf8_bytes, plus movemask / maddubs /
-// testz. None of these map cleanly onto std::simd primitives, and the
-// algorithm never leaves raw __m256i, so -- exactly like the slice-1
-// convert_utf16_to_utf8.cpp kernel -- we PRAGMATICALLY keep the x86 AVX2
-// intrinsics. They compile and run under the AVX2 target region applied by
-// stdsimd/begin.h and the -mavx2 command-line baseline (verified equivalent to
-// haswell's). The vec<->__m256i bridge is not required because the algorithm
-// operates only on raw __m256i.
-//
-// TODO(verify): an ARM (vqtbl / vsh) and a scalar fallback arm could be added
-// for non-x86 targets; only the x86 arm is exercised for the AVX2 tier.
-//
-// This file is #included inside namespace simdutf::SIMDUTF_IMPLEMENTATION by
+// #included inside namespace simdutf::SIMDUTF_IMPLEMENTATION::{anon} by
 // stdsimd/impl_utf8_utf32.inc.cpp.
 
-#if SIMDUTF_IS_X86_64
-
-// The kernel below is byte-for-byte the haswell AVX2 implementation: it depends
-// only on <immintrin.h> intrinsics and simdutf::tables::utf16_to_utf8 (no
-// haswell simd:: wrapper types), so it is backend agnostic and reused VERBATIM
-// as the escape hatch, mirroring how the slice-1 utf8->utf16/utf32 masked
-// transcoders are reused.
+#if SIMDUTF_STDSIMD_HAS_AVX2
   #include "haswell/avx2_convert_utf32_to_utf8.cpp"
-
+  #define stdsimd_convert_utf32_to_utf8 avx2_convert_utf32_to_utf8
+  #define stdsimd_convert_utf32_to_utf8_with_errors                              \
+    avx2_convert_utf32_to_utf8_with_errors
 #else
-  #error "stdsimd convert_utf32_to_utf8: only the x86_64 AVX2 arm is implemented"
-#endif // SIMDUTF_IS_X86_64
+  // westmere's sse utf32->utf8 kernel is self-contained (only pshufb/SSE
+  // intrinsics + simdutf::tables::utf16_to_utf8); it references no
+  // internal::westmere helper, so no loader.cpp include is needed here.
+  #include "westmere/sse_convert_utf32_to_utf8.cpp"
+  #define stdsimd_convert_utf32_to_utf8 sse_convert_utf32_to_utf8
+  #define stdsimd_convert_utf32_to_utf8_with_errors                              \
+    sse_convert_utf32_to_utf8_with_errors
+#endif

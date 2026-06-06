@@ -31,24 +31,21 @@
 } // namespace SIMDUTF_IMPLEMENTATION (temporarily)
 } // namespace simdutf (temporarily)
 
-// The SIMD base64 building blocks in stdsimd/base64.cpp are an escape-hatch port
-// of haswell/avx2_base64.cpp expressed entirely in 256-bit __m256i / _mm256_*
-// intrinsics (pshufb / multishift / movemask / thintable compress have no
-// portable std::simd form). Those intrinsics physically require the AVX2 ISA, so
-// the SIMD base64 path is built ONLY for the AVX2 tier. The SSE (128-bit) and
-// AVX512 (512-bit) tiers delegate the base64 family to scalar::base64 (exactly
-// like the fallback backend); a dedicated 128-bit / 512-bit std::simd base64
-// port is left as future work. See the per-method bodies below.
-  #define SIMDUTF_STDSIMD_BASE64_SIMD SIMDUTF_STDSIMD_AVX2_KERNELS
+// The base64 SIMD building blocks are width-specific intrinsic kernels with no
+// portable std::simd form (pshufb / multishift / movemask / thintable compress).
+// stdsimd/base64.cpp tier-selects the existing arch kernels -- westmere's
+// 128-bit kernel on the SSE tier, haswell's 256-bit kernel on AVX2/AVX512 -- and
+// aliases their entry points to uniform stdsimd_ names, so the base64 family now
+// runs as real SIMD on EVERY tier (was AVX2-only). See the per-method bodies.
 
-#if SIMDUTF_FEATURE_BASE64 && SIMDUTF_STDSIMD_BASE64_SIMD
+#if SIMDUTF_FEATURE_BASE64
 
 // SIMD building blocks (block64 + free helpers) consumed by generic/base64.h.
-// base64.cpp opens NO namespace of its own (mirroring haswell/avx2_base64.cpp),
-// so emit it inside the backend's anonymous namespace, exactly where haswell
-// places it. It needs tables::base64::*, scalar::base64::*, and the
-// bitmanipulation helpers (count_ones/trailing_zeroes/is_power_of_two), all of
-// which are visible at this scope.
+// The selected arch kernel opens NO namespace of its own (mirroring
+// haswell/avx2_base64.cpp), so emit it inside the backend's anonymous namespace,
+// exactly where haswell places it. It needs tables::base64::*, scalar::base64::*,
+// and the bitmanipulation helpers (count_ones/trailing_zeroes/is_power_of_two),
+// all of which are visible at this scope.
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 namespace {
@@ -61,7 +58,7 @@ namespace {
 // wraps in simdutf::SIMDUTF_IMPLEMENTATION::{anonymous}::base64, so it MUST be
 // at file scope.
   #include "generic/base64.h"
-#endif // SIMDUTF_FEATURE_BASE64 && SIMDUTF_STDSIMD_BASE64_SIMD
+#endif // SIMDUTF_FEATURE_BASE64
 
 #if SIMDUTF_FEATURE_BASE64 || SIMDUTF_FEATURE_DETECT_ENCODING
 // Vectorized find() (util::find) consumed by the find() methods below; uses the
@@ -86,9 +83,7 @@ namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 
 #if SIMDUTF_FEATURE_BASE64
-
-#if SIMDUTF_STDSIMD_BASE64_SIMD
-// ===== AVX2 tier: real SIMD base64 (escape-hatch port of avx2_base64.cpp). ===
+// ===== All tiers: real SIMD base64 (tier-selected westmere/haswell kernel). ===
 
 simdutf_warn_unused result implementation::base64_to_binary(
     const char *input, size_t length, char *output, base64_options options,
@@ -224,11 +219,11 @@ size_t implementation::binary_to_base64_with_lines(
     const char *input, size_t length, char *output, size_t line_length,
     base64_options options) const noexcept {
   if (options & base64_url) {
-    return avx2_encode_base64_impl<true, true>(output, input, length, options,
-                                               line_length);
+    return stdsimd_encode_base64_impl<true, true>(output, input, length,
+                                                  options, line_length);
   } else {
-    return avx2_encode_base64_impl<false, true>(output, input, length, options,
-                                                line_length);
+    return stdsimd_encode_base64_impl<false, true>(output, input, length,
+                                                   options, line_length);
   }
 }
 
@@ -236,72 +231,29 @@ size_t implementation::binary_to_base64_with_lines(
 // Port agent owns a dedicated partial; it is included separately from
 // implementation.cpp.
 
+// binary_length_from_base64 is a length-counting helper, not the bulk
+// transcoder. The AVX2 tier uses haswell's vectorized avx2_binary_length helper.
+// The SSE tier's westmere kernel exposes no such free helper, and the generic
+// 128-bit counter (generic/base64lengths.h) needs a simd8x64::gteq the stdsimd
+// simd wrapper does not provide (it has gt / gteq_unsigned), so the SSE tier
+// routes this one helper to scalar::base64 (the bulk decode/encode paths remain
+// full 128-bit SIMD via westmere). A native SSE length counter is future work.
 simdutf_warn_unused size_t implementation::binary_length_from_base64(
     const char *input, size_t length) const noexcept {
-  return avx2_binary_length_from_base64(input, length);
+#if SIMDUTF_STDSIMD_HAS_AVX2
+  return stdsimd_binary_length_from_base64(input, length);
+#else
+  return scalar::base64::binary_length_from_base64(input, length);
+#endif
 }
 
 simdutf_warn_unused size_t implementation::binary_length_from_base64(
     const char16_t *input, size_t length) const noexcept {
-  return avx2_binary_length_from_base64(input, length);
-}
-
-#else // !SIMDUTF_STDSIMD_BASE64_SIMD
-// ===== SSE / AVX512 tiers: delegate the base64 family to scalar (same as the
-// ===== fallback backend). A 128-bit / 512-bit std::simd port is future work. ==
-
-simdutf_warn_unused result implementation::base64_to_binary(
-    const char *input, size_t length, char *output, base64_options options,
-    last_chunk_handling_options last_chunk_options) const noexcept {
-  return scalar::base64::base64_to_binary_details_impl(
-      input, length, output, options, last_chunk_options);
-}
-
-simdutf_warn_unused full_result implementation::base64_to_binary_details(
-    const char *input, size_t length, char *output, base64_options options,
-    last_chunk_handling_options last_chunk_options) const noexcept {
-  return scalar::base64::base64_to_binary_details_impl(
-      input, length, output, options, last_chunk_options);
-}
-
-simdutf_warn_unused result implementation::base64_to_binary(
-    const char16_t *input, size_t length, char *output, base64_options options,
-    last_chunk_handling_options last_chunk_options) const noexcept {
-  return scalar::base64::base64_to_binary_details_impl(
-      input, length, output, options, last_chunk_options);
-}
-
-simdutf_warn_unused full_result implementation::base64_to_binary_details(
-    const char16_t *input, size_t length, char *output, base64_options options,
-    last_chunk_handling_options last_chunk_options) const noexcept {
-  return scalar::base64::base64_to_binary_details_impl(
-      input, length, output, options, last_chunk_options);
-}
-
-size_t implementation::binary_to_base64(const char *input, size_t length,
-                                        char *output,
-                                        base64_options options) const noexcept {
-  return scalar::base64::tail_encode_base64(output, input, length, options);
-}
-
-size_t implementation::binary_to_base64_with_lines(
-    const char *input, size_t length, char *output, size_t line_length,
-    base64_options options) const noexcept {
-  return scalar::base64::tail_encode_base64_impl<true>(output, input, length,
-                                                       options, line_length);
-}
-
-simdutf_warn_unused size_t implementation::binary_length_from_base64(
-    const char *input, size_t length) const noexcept {
+#if SIMDUTF_STDSIMD_HAS_AVX2
+  return stdsimd_binary_length_from_base64(input, length);
+#else
   return scalar::base64::binary_length_from_base64(input, length);
+#endif
 }
 
-simdutf_warn_unused size_t implementation::binary_length_from_base64(
-    const char16_t *input, size_t length) const noexcept {
-  return scalar::base64::binary_length_from_base64(input, length);
-}
-
-#endif // SIMDUTF_STDSIMD_BASE64_SIMD
 #endif // SIMDUTF_FEATURE_BASE64
-
-#undef SIMDUTF_STDSIMD_BASE64_SIMD

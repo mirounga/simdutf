@@ -41,31 +41,29 @@
 // like haswell does, so the generic utf8_to_latin1 converter can call
 // convert_masked_utf8_to_latin1() by unqualified name from the enclosing scope,
 // and so the implementation methods below can call the avx2_convert_* kernels.
-// The whole latin1 family in the stdsimd backend is built on haswell's 256-bit
-// AVX2 kernels (each stdsimd/convert_*latin1*.cpp just #includes the matching
-// haswell/avx2_convert_*latin1*.cpp). Those 256-bit intrinsics require the AVX2
-// ISA, so the SIMD latin1 family is AVX2 tier only; SSE/AVX512 tiers delegate
-// every latin1 direction to scalar (same as the fallback backend).
+// Each stdsimd/convert_*latin1*.cpp wrapper tier-selects the matching arch
+// kernel (westmere's 128-bit on the SSE tier, haswell's 256-bit on AVX2/AVX512)
+// and aliases it to a uniform stdsimd_convert_* name, so the whole latin1 family
+// runs as real SIMD on EVERY tier (no scalar delegation).
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 namespace {
 using namespace simd;
 
-// latin1 <-> {utf8,utf16,utf32} bulk transcoders: 256-bit hand-adapted kernels,
-// AVX2 tier only. SSE/AVX512 route those directions to scalar (below).
-#if SIMDUTF_STDSIMD_AVX2_KERNELS
-  #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-    #include "stdsimd/convert_latin1_to_utf8.cpp"
-  #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-  #if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-    #include "stdsimd/convert_latin1_to_utf16.cpp"
-    #include "stdsimd/convert_utf16_to_latin1.cpp"
-  #endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-  #if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-    #include "stdsimd/convert_latin1_to_utf32.cpp"
-    #include "stdsimd/convert_utf32_to_latin1.cpp"
-  #endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-#endif // SIMDUTF_STDSIMD_AVX2_KERNELS
+// latin1 <-> {utf8,utf16,utf32} bulk transcoders: each wrapper tier-selects the
+// westmere(128) / haswell(256) kernel and aliases it to a uniform stdsimd_ name,
+// so they run as real SIMD on EVERY tier.
+#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
+  #include "stdsimd/convert_latin1_to_utf8.cpp"
+#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
+#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
+  #include "stdsimd/convert_latin1_to_utf16.cpp"
+  #include "stdsimd/convert_utf16_to_latin1.cpp"
+#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
+#if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
+  #include "stdsimd/convert_latin1_to_utf32.cpp"
+  #include "stdsimd/convert_utf32_to_latin1.cpp"
+#endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
 
 #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 // utf8 -> latin1 per-block masked transcoder: a 128-bit op, so westmere's pure
@@ -92,17 +90,17 @@ using namespace simd;
 namespace simdutf {
 namespace SIMDUTF_IMPLEMENTATION {
 
-#if SIMDUTF_STDSIMD_AVX2_KERNELS
-// ===== AVX2 tier: real SIMD latin1 family (256-bit kernels + scalar tail). ===
+// ===== Real SIMD latin1 family on every tier (tier-selected kernels + scalar
+// ===== tail). ================================================================
 
 // ===========================================================================
-// latin1 -> utf8  (adapted avx2_convert_latin1_to_utf8 kernel + scalar tail)
+// latin1 -> utf8  (tier-selected latin1_to_utf8 kernel + scalar tail)
 // ===========================================================================
 #if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 simdutf_warn_unused size_t implementation::convert_latin1_to_utf8(
     const char *buf, size_t len, char *utf8_output) const noexcept {
   std::pair<const char *, char *> ret =
-      avx2_convert_latin1_to_utf8(buf, len, utf8_output);
+      stdsimd_convert_latin1_to_utf8(buf, len, utf8_output);
   size_t converted_chars = ret.second - utf8_output;
 
   if (ret.first != buf + len) {
@@ -116,13 +114,13 @@ simdutf_warn_unused size_t implementation::convert_latin1_to_utf8(
 #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 
 // ===========================================================================
-// latin1 -> utf16  (adapted avx2_convert_latin1_to_utf16 kernel + scalar tail)
+// latin1 -> utf16  (tier-selected latin1_to_utf16 kernel + scalar tail)
 // ===========================================================================
 #if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
 simdutf_warn_unused size_t implementation::convert_latin1_to_utf16le(
     const char *buf, size_t len, char16_t *utf16_output) const noexcept {
   std::pair<const char *, char16_t *> ret =
-      avx2_convert_latin1_to_utf16<endianness::LITTLE>(buf, len, utf16_output);
+      stdsimd_convert_latin1_to_utf16<endianness::LITTLE>(buf, len, utf16_output);
   if (ret.first == nullptr) {
     return 0;
   }
@@ -142,7 +140,7 @@ simdutf_warn_unused size_t implementation::convert_latin1_to_utf16le(
 simdutf_warn_unused size_t implementation::convert_latin1_to_utf16be(
     const char *buf, size_t len, char16_t *utf16_output) const noexcept {
   std::pair<const char *, char16_t *> ret =
-      avx2_convert_latin1_to_utf16<endianness::BIG>(buf, len, utf16_output);
+      stdsimd_convert_latin1_to_utf16<endianness::BIG>(buf, len, utf16_output);
   if (ret.first == nullptr) {
     return 0;
   }
@@ -161,13 +159,13 @@ simdutf_warn_unused size_t implementation::convert_latin1_to_utf16be(
 #endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
 
 // ===========================================================================
-// latin1 -> utf32  (adapted avx2_convert_latin1_to_utf32 kernel + scalar tail)
+// latin1 -> utf32  (tier-selected latin1_to_utf32 kernel + scalar tail)
 // ===========================================================================
 #if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
 simdutf_warn_unused size_t implementation::convert_latin1_to_utf32(
     const char *buf, size_t len, char32_t *utf32_output) const noexcept {
   std::pair<const char *, char32_t *> ret =
-      avx2_convert_latin1_to_utf32(buf, len, utf32_output);
+      stdsimd_convert_latin1_to_utf32(buf, len, utf32_output);
   if (ret.first == nullptr) {
     return 0;
   }
@@ -207,13 +205,13 @@ simdutf_warn_unused size_t implementation::convert_valid_utf8_to_latin1(
 #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 
 // ===========================================================================
-// utf16 -> latin1  (adapted avx2_convert_utf16_to_latin1 kernel + scalar tail)
+// utf16 -> latin1  (tier-selected utf16_to_latin1 kernel + scalar tail)
 // ===========================================================================
 #if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
 simdutf_warn_unused size_t implementation::convert_utf16le_to_latin1(
     const char16_t *buf, size_t len, char *latin1_output) const noexcept {
   std::pair<const char16_t *, char *> ret =
-      avx2_convert_utf16_to_latin1<endianness::LITTLE>(buf, len, latin1_output);
+      stdsimd_convert_utf16_to_latin1<endianness::LITTLE>(buf, len, latin1_output);
   if (ret.first == nullptr) {
     return 0;
   }
@@ -233,7 +231,7 @@ simdutf_warn_unused size_t implementation::convert_utf16le_to_latin1(
 simdutf_warn_unused size_t implementation::convert_utf16be_to_latin1(
     const char16_t *buf, size_t len, char *latin1_output) const noexcept {
   std::pair<const char16_t *, char *> ret =
-      avx2_convert_utf16_to_latin1<endianness::BIG>(buf, len, latin1_output);
+      stdsimd_convert_utf16_to_latin1<endianness::BIG>(buf, len, latin1_output);
   if (ret.first == nullptr) {
     return 0;
   }
@@ -254,7 +252,7 @@ simdutf_warn_unused result
 implementation::convert_utf16le_to_latin1_with_errors(
     const char16_t *buf, size_t len, char *latin1_output) const noexcept {
   std::pair<result, char *> ret =
-      avx2_convert_utf16_to_latin1_with_errors<endianness::LITTLE>(
+      stdsimd_convert_utf16_to_latin1_with_errors<endianness::LITTLE>(
           buf, len, latin1_output);
   if (ret.first.error) {
     return ret.first;
@@ -281,7 +279,7 @@ simdutf_warn_unused result
 implementation::convert_utf16be_to_latin1_with_errors(
     const char16_t *buf, size_t len, char *latin1_output) const noexcept {
   std::pair<result, char *> ret =
-      avx2_convert_utf16_to_latin1_with_errors<endianness::BIG>(buf, len,
+      stdsimd_convert_utf16_to_latin1_with_errors<endianness::BIG>(buf, len,
                                                                 latin1_output);
   if (ret.first.error) {
     return ret.first;
@@ -318,13 +316,13 @@ simdutf_warn_unused size_t implementation::convert_valid_utf16be_to_latin1(
 #endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
 
 // ===========================================================================
-// utf32 -> latin1  (adapted avx2_convert_utf32_to_latin1 kernel + scalar tail)
+// utf32 -> latin1  (tier-selected utf32_to_latin1 kernel + scalar tail)
 // ===========================================================================
 #if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
 simdutf_warn_unused size_t implementation::convert_utf32_to_latin1(
     const char32_t *buf, size_t len, char *latin1_output) const noexcept {
   std::pair<const char32_t *, char *> ret =
-      avx2_convert_utf32_to_latin1(buf, len, latin1_output);
+      stdsimd_convert_utf32_to_latin1(buf, len, latin1_output);
   if (ret.first == nullptr) {
     return 0;
   }
@@ -345,7 +343,7 @@ simdutf_warn_unused result implementation::convert_utf32_to_latin1_with_errors(
   // ret.first.count is always the position in the buffer, not the number of
   // code units written even if finished
   std::pair<result, char *> ret =
-      avx2_convert_utf32_to_latin1_with_errors(buf, len, latin1_output);
+      stdsimd_convert_utf32_to_latin1_with_errors(buf, len, latin1_output);
   if (ret.first.count != len) {
     result scalar_res = scalar::utf32_to_latin1::convert_with_errors(
         buf + ret.first.count, len - ret.first.count, ret.second);
@@ -367,115 +365,3 @@ simdutf_warn_unused size_t implementation::convert_valid_utf32_to_latin1(
   return convert_utf32_to_latin1(buf, len, latin1_output);
 }
 #endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-
-#else // !SIMDUTF_STDSIMD_AVX2_KERNELS
-// ===== SSE / AVX512 tiers: delegate the WHOLE latin1 family to scalar (same as
-// ===== the fallback backend; the SIMD kernels are 256-bit AVX2 only). ========
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-simdutf_warn_unused size_t implementation::convert_latin1_to_utf8(
-    const char *buf, size_t len, char *utf8_output) const noexcept {
-  return scalar::latin1_to_utf8::convert(buf, len, utf8_output);
-}
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-simdutf_warn_unused size_t implementation::convert_latin1_to_utf16le(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::latin1_to_utf16::convert<endianness::LITTLE>(buf, len,
-                                                              utf16_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_latin1_to_utf16be(
-    const char *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::latin1_to_utf16::convert<endianness::BIG>(buf, len,
-                                                           utf16_output);
-}
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-simdutf_warn_unused size_t implementation::convert_latin1_to_utf32(
-    const char *buf, size_t len, char32_t *utf32_output) const noexcept {
-  return scalar::latin1_to_utf32::convert(buf, len, utf32_output);
-}
-#endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-// utf8 -> latin1 is real SIMD on every tier (128-bit masked kernel + generic
-// driver above), so the SSE/AVX512 versions are identical to the AVX2 ones.
-simdutf_warn_unused size_t implementation::convert_utf8_to_latin1(
-    const char *buf, size_t len, char *latin1_output) const noexcept {
-  utf8_to_latin1::validating_transcoder converter;
-  return converter.convert(buf, len, latin1_output);
-}
-
-simdutf_warn_unused result implementation::convert_utf8_to_latin1_with_errors(
-    const char *buf, size_t len, char *latin1_output) const noexcept {
-  utf8_to_latin1::validating_transcoder converter;
-  return converter.convert_with_errors(buf, len, latin1_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_valid_utf8_to_latin1(
-    const char *buf, size_t len, char *latin1_output) const noexcept {
-  return utf8_to_latin1::convert_valid(buf, len, latin1_output);
-}
-#endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-simdutf_warn_unused size_t implementation::convert_utf16le_to_latin1(
-    const char16_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf16_to_latin1::convert<endianness::LITTLE>(buf, len,
-                                                              latin1_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_utf16be_to_latin1(
-    const char16_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf16_to_latin1::convert<endianness::BIG>(buf, len,
-                                                           latin1_output);
-}
-
-simdutf_warn_unused result
-implementation::convert_utf16le_to_latin1_with_errors(
-    const char16_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf16_to_latin1::convert_with_errors<endianness::LITTLE>(
-      buf, len, latin1_output);
-}
-
-simdutf_warn_unused result
-implementation::convert_utf16be_to_latin1_with_errors(
-    const char16_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf16_to_latin1::convert_with_errors<endianness::BIG>(
-      buf, len, latin1_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_valid_utf16le_to_latin1(
-    const char16_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf16_to_latin1::convert_valid<endianness::LITTLE>(
-      buf, len, latin1_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_valid_utf16be_to_latin1(
-    const char16_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf16_to_latin1::convert_valid<endianness::BIG>(buf, len,
-                                                                 latin1_output);
-}
-#endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_LATIN1
-
-#if SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-simdutf_warn_unused size_t implementation::convert_utf32_to_latin1(
-    const char32_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf32_to_latin1::convert(buf, len, latin1_output);
-}
-
-simdutf_warn_unused result implementation::convert_utf32_to_latin1_with_errors(
-    const char32_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf32_to_latin1::convert_with_errors(buf, len, latin1_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_valid_utf32_to_latin1(
-    const char32_t *buf, size_t len, char *latin1_output) const noexcept {
-  return scalar::utf32_to_latin1::convert_valid(buf, len, latin1_output);
-}
-#endif // SIMDUTF_FEATURE_UTF32 && SIMDUTF_FEATURE_LATIN1
-
-#endif // SIMDUTF_STDSIMD_AVX2_KERNELS

@@ -36,11 +36,19 @@ few non-portable ops through `tier_ops.h` (per-tier impl in
     SSE/AVX-512 tiers use westmere's pure-128-bit kernel and the AVX2 tier uses
     haswell's 256-bit one; the generic driver supplies the tier-width ASCII fast path
     + `NUM_CHUNKS` 1/2/4 validation. (SSE/AVX-512 ~2.3–3.0 GB/s vs ~0.45 scalar.)
-- **AVX2 tier only** (256-bit hand-adapted bulk kernels; SSE/AVX-512 → scalar):
-  the *reverse / non-utf8-source* directions — `utf16→utf8`, `utf32→utf8`,
-  `latin1→utf8/utf16/utf32`, `utf16↔utf32`, `utf16→latin1`, `utf32→latin1`,
-  `utf16fix`, `base64`. These are standalone width-specific kernels; porting them to
-  native 128-bit (westmere-style) and 512-bit (icelake-style) is the remaining work.
+  - *Bulk transcoders* (width-specific intrinsic kernels, tier-selected): `utf16→utf8`,
+    `utf32→utf8`, `latin1→utf8/utf16/utf32`, `utf16→latin1`, `utf32→latin1`,
+    `utf16→utf32`, `utf16fix`, `base64`. Each `stdsimd/convert_*.cpp` is a thin
+    selector that `#include`s westmere's pure-128-bit kernel on SSE and haswell's
+    256-bit kernel on AVX2/AVX-512 (AVX-512 implies AVX2), aliased to a uniform
+    `stdsimd_convert_*` name. No copies, no new kernels.
+- **One remaining gap:** `utf32→utf16` runs as real SIMD on AVX2/AVX-512 but stays
+  **scalar on the SSE tier** — westmere's `sse_convert_utf32_to_utf16` drives its
+  surrogate expansion through westmere's own `simd::` wrapper library, which collides
+  with stdsimd's `simd::` namespace. A native pure-128-bit kernel (inlining the
+  shuffle/pack tables) would close it.
+- **Future optimization:** the AVX-512 tier reuses the 256-bit haswell bulk kernels;
+  native 512-bit (icelake-style, vbmi/vbmi2) kernels per direction would be faster.
 
 ## Design notes
 

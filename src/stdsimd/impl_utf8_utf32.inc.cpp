@@ -52,10 +52,9 @@ using namespace simd;
     #include "westmere/sse_convert_utf8_to_utf32.cpp"
   #endif
 
-// utf32 -> utf8 bulk transcoder (256-bit, adapted from haswell): AVX2 tier only.
-  #if SIMDUTF_STDSIMD_AVX2_KERNELS
-    #include "stdsimd/convert_utf32_to_utf8.cpp"
-  #endif
+// utf32 -> utf8 bulk transcoder: tier-selects westmere(128) / haswell(256),
+// so it runs on EVERY tier (aliased to stdsimd_convert_utf32_to_utf8).
+  #include "stdsimd/convert_utf32_to_utf8.cpp"
 } // unnamed namespace
 } // namespace SIMDUTF_IMPLEMENTATION
 } // namespace simdutf
@@ -95,14 +94,13 @@ simdutf_warn_unused size_t implementation::convert_valid_utf8_to_utf32(
   return utf8_to_utf32::convert_valid(input, size, utf32_output);
 }
 
-#if SIMDUTF_STDSIMD_AVX2_KERNELS
 // ===========================================================================
-// utf32 -> utf8  (256-bit adapted kernel + scalar tail): AVX2 tier only.
+// utf32 -> utf8  (tier-selected 128/256-bit kernel + scalar tail): all tiers.
 // ===========================================================================
 simdutf_warn_unused size_t implementation::convert_utf32_to_utf8(
     const char32_t *buf, size_t len, char *utf8_output) const noexcept {
   std::pair<const char32_t *, char *> ret =
-      avx2_convert_utf32_to_utf8(buf, len, utf8_output);
+      stdsimd_convert_utf32_to_utf8(buf, len, utf8_output);
   if (ret.first == nullptr) {
     return 0;
   }
@@ -123,7 +121,7 @@ simdutf_warn_unused result implementation::convert_utf32_to_utf8_with_errors(
   // ret.first.count is always the position in the buffer, not the number of
   // code units written even if finished
   std::pair<result, char *> ret =
-      avx2_convert_utf32_to_utf8_with_errors(buf, len, utf8_output);
+      stdsimd_convert_utf32_to_utf8_with_errors(buf, len, utf8_output);
   if (ret.first.count != len) {
     result scalar_res = scalar::utf32_to_utf8::convert_with_errors(
         buf + ret.first.count, len - ret.first.count, ret.second);
@@ -145,24 +143,4 @@ simdutf_warn_unused size_t implementation::convert_valid_utf32_to_utf8(
   return convert_utf32_to_utf8(buf, len, utf8_output);
 }
 
-#else // !SIMDUTF_STDSIMD_AVX2_KERNELS
-// ===== SSE / AVX512 tiers: utf32 -> utf8 via scalar (utf8 -> utf32 above is
-// ===== real SIMD on every tier). =============================================
-
-simdutf_warn_unused size_t implementation::convert_utf32_to_utf8(
-    const char32_t *buf, size_t len, char *utf8_output) const noexcept {
-  return scalar::utf32_to_utf8::convert(buf, len, utf8_output);
-}
-
-simdutf_warn_unused result implementation::convert_utf32_to_utf8_with_errors(
-    const char32_t *buf, size_t len, char *utf8_output) const noexcept {
-  return scalar::utf32_to_utf8::convert_with_errors(buf, len, utf8_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_valid_utf32_to_utf8(
-    const char32_t *buf, size_t len, char *utf8_output) const noexcept {
-  return scalar::utf32_to_utf8::convert_valid(buf, len, utf8_output);
-}
-
-#endif // SIMDUTF_STDSIMD_AVX2_KERNELS
 #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_UTF32

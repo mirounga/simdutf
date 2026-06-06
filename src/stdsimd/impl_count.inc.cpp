@@ -18,10 +18,11 @@
 //     generic/utf16/utf8_length_from_utf16_bytemask.h VERBATIM.
 //   * utf8_length_from_utf32 reuses generic/utf32.h VERBATIM.
 //   * utf8_length_from_latin1 and utf16_length_from_utf32 have no
-//     backend-agnostic generic header on the AVX2 path -- haswell inlines pure
-//     _mm256_* kernels. We keep those as x86 escape hatches (guarded by
-//     SIMDUTF_IS_X86_64) per the stdsimd escape-hatch policy, with a scalar
-//     fallback for non-x86 targets.
+//     backend-agnostic generic header -- haswell inlines pure _mm256_* kernels
+//     and westmere pure _mm_* kernels. We keep those as x86 escape-hatch
+//     intrinsic kernels that tier-select on SIMDUTF_STDSIMD_HAS_AVX2: 256-bit
+//     (haswell) on the AVX2/AVX512 tiers, 128-bit (westmere) on the SSE tier.
+//     Both run as REAL SIMD on every tier.
 //
 // The generic algorithm headers self-wrap in
 //   namespace simdutf { namespace SIMDUTF_IMPLEMENTATION { namespace { ... } } }
@@ -53,8 +54,10 @@ namespace {
 simdutf_really_inline size_t
 stdsimd_utf8_length_from_latin1(const char *input, size_t len) {
   const uint8_t *data = reinterpret_cast<const uint8_t *>(input);
-    // 256-bit kernel: AVX2 tier only. SSE/AVX512 tiers fall through to scalar.
-    #if SIMDUTF_STDSIMD_AVX2_KERNELS
+    // Tier-select inline kernel: 256-bit on AVX2/AVX512, 128-bit on SSE.
+    // Both are width-specific x86 movemask/sad loops (no portable std::simd
+    // form); they mirror haswell/westmere implementation.cpp respectively.
+    #if SIMDUTF_STDSIMD_HAS_AVX2
   size_t answer = len / sizeof(__m256i) * sizeof(__m256i);
   size_t i = 0;
   if (answer >= 2048) { // long strings optimization
@@ -106,18 +109,73 @@ stdsimd_utf8_length_from_latin1(const char *input, size_t len) {
   }
   return answer + scalar::latin1::utf8_length_from_latin1(
                       reinterpret_cast<const char *>(data + i), len - i);
-    #else  // !SIMDUTF_STDSIMD_AVX2_KERNELS
-  return scalar::latin1::utf8_length_from_latin1(
-      reinterpret_cast<const char *>(data), len);
-    #endif // SIMDUTF_STDSIMD_AVX2_KERNELS
+    #else  // !SIMDUTF_STDSIMD_HAS_AVX2 -- 128-bit SSE kernel (westmere)
+  size_t answer = len / sizeof(__m128i) * sizeof(__m128i);
+  size_t i = 0;
+  if (answer >= 2048) { // long strings optimization
+    __m128i two_64bits = _mm_setzero_si128();
+    while (i + sizeof(__m128i) <= len) {
+      __m128i runner = _mm_setzero_si128();
+      size_t iterations = (len - i) / sizeof(__m128i);
+      if (iterations > 255) {
+        iterations = 255;
+      }
+      size_t max_i = i + iterations * sizeof(__m128i) - sizeof(__m128i);
+      for (; i + 4 * sizeof(__m128i) <= max_i; i += 4 * sizeof(__m128i)) {
+        __m128i input1 = _mm_loadu_si128((const __m128i *)(data + i));
+        __m128i input2 =
+            _mm_loadu_si128((const __m128i *)(data + i + sizeof(__m128i)));
+        __m128i input3 =
+            _mm_loadu_si128((const __m128i *)(data + i + 2 * sizeof(__m128i)));
+        __m128i input4 =
+            _mm_loadu_si128((const __m128i *)(data + i + 3 * sizeof(__m128i)));
+        __m128i input12 =
+            _mm_add_epi8(_mm_cmpgt_epi8(_mm_setzero_si128(), input1),
+                         _mm_cmpgt_epi8(_mm_setzero_si128(), input2));
+        __m128i input34 =
+            _mm_add_epi8(_mm_cmpgt_epi8(_mm_setzero_si128(), input3),
+                         _mm_cmpgt_epi8(_mm_setzero_si128(), input4));
+        __m128i input1234 = _mm_add_epi8(input12, input34);
+        runner = _mm_sub_epi8(runner, input1234);
+      }
+      for (; i <= max_i; i += sizeof(__m128i)) {
+        __m128i more_input = _mm_loadu_si128((const __m128i *)(data + i));
+        runner = _mm_sub_epi8(runner,
+                              _mm_cmpgt_epi8(_mm_setzero_si128(), more_input));
+      }
+      two_64bits =
+          _mm_add_epi64(two_64bits, _mm_sad_epu8(runner, _mm_setzero_si128()));
+    }
+    answer +=
+        _mm_extract_epi64(two_64bits, 0) + _mm_extract_epi64(two_64bits, 1);
+  } else if (answer > 0) { // short string optimization
+    for (; i + 2 * sizeof(__m128i) <= len; i += 2 * sizeof(__m128i)) {
+      __m128i latin = _mm_loadu_si128((const __m128i *)(data + i));
+      uint16_t non_ascii = (uint16_t)_mm_movemask_epi8(latin);
+      answer += count_ones(non_ascii);
+      latin = _mm_loadu_si128((const __m128i *)(data + i) + 1);
+      non_ascii = (uint16_t)_mm_movemask_epi8(latin);
+      answer += count_ones(non_ascii);
+    }
+    for (; i + sizeof(__m128i) <= len; i += sizeof(__m128i)) {
+      __m128i latin = _mm_loadu_si128((const __m128i *)(data + i));
+      uint16_t non_ascii = (uint16_t)_mm_movemask_epi8(latin);
+      answer += count_ones(non_ascii);
+    }
+  }
+  return answer + scalar::latin1::utf8_length_from_latin1(
+                      reinterpret_cast<const char *>(data + i), len - i);
+    #endif // SIMDUTF_STDSIMD_HAS_AVX2
 }
   #endif // SIMDUTF_FEATURE_UTF8 && SIMDUTF_FEATURE_LATIN1
 
   #if SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
 simdutf_really_inline size_t
 stdsimd_utf16_length_from_utf32(const char32_t *input, size_t length) {
-    // 256-bit kernel: AVX2 tier only. SSE/AVX512 tiers fall through to scalar.
-    #if SIMDUTF_STDSIMD_AVX2_KERNELS
+    // Tier-select inline kernel: 256-bit on AVX2/AVX512, 128-bit on SSE.
+    // Width-specific surrogate-counting movemask loops (no portable std::simd
+    // form); mirror haswell/westmere implementation.cpp respectively.
+    #if SIMDUTF_STDSIMD_HAS_AVX2
   const __m256i v_00000000 = _mm256_setzero_si256();
   const __m256i v_ffff0000 = _mm256_set1_epi32((uint32_t)0xffff0000);
   size_t pos = 0;
@@ -133,9 +191,23 @@ stdsimd_utf16_length_from_utf32(const char32_t *input, size_t length) {
   }
   return count +
          scalar::utf32::utf16_length_from_utf32(input + pos, length - pos);
-    #else  // !SIMDUTF_STDSIMD_AVX2_KERNELS
-  return scalar::utf32::utf16_length_from_utf32(input, length);
-    #endif // SIMDUTF_STDSIMD_AVX2_KERNELS
+    #else  // !SIMDUTF_STDSIMD_HAS_AVX2 -- 128-bit SSE kernel (westmere)
+  const __m128i v_00000000 = _mm_setzero_si128();
+  const __m128i v_ffff0000 = _mm_set1_epi32((uint32_t)0xffff0000);
+  size_t pos = 0;
+  size_t count = 0;
+  for (; pos + 4 <= length; pos += 4) {
+    __m128i in = _mm_loadu_si128((__m128i *)(input + pos));
+    const __m128i surrogate_bytemask =
+        _mm_cmpeq_epi32(_mm_and_si128(in, v_ffff0000), v_00000000);
+    const uint16_t surrogate_bitmask =
+        static_cast<uint16_t>(_mm_movemask_epi8(surrogate_bytemask));
+    size_t surrogate_count = (16 - count_ones(surrogate_bitmask)) / 4;
+    count += 4 + surrogate_count;
+  }
+  return count +
+         scalar::utf32::utf16_length_from_utf32(input + pos, length - pos);
+    #endif // SIMDUTF_STDSIMD_HAS_AVX2
 }
   #endif // SIMDUTF_FEATURE_UTF16 && SIMDUTF_FEATURE_UTF32
 

@@ -1,16 +1,20 @@
-// ==== stdsimd latin1 -> utf32 conversion (adapted from haswell) ====
+// ==== stdsimd latin1 -> utf32 conversion (tier-selected arch kernel) ====
 //
-// There is no backend-agnostic generic header for the AVX2 latin1->utf32 path,
-// so this file is adapted from src/haswell/avx2_convert_latin1_to_utf32.cpp.
+// The latin1->utf32 bulk transcoder is a width-specific intrinsic kernel
+// (cvtepu8_epi32 8->32-bit widening) with no portable std::simd form and no
+// backend-agnostic generic header. Rather than carry a copy, we reuse the
+// existing arch kernels per tier and alias them to a uniform name:
+//   * SSE tier (128-bit):        westmere/sse_convert_latin1_to_utf32.cpp
+//   * AVX2/AVX512 tiers (256b):  haswell/avx2_convert_latin1_to_utf32.cpp
+//     (AVX-512 implies AVX2, so the 256-bit kernel runs there too.)
 //
-// Per the stdsimd escape-hatch policy, the operation used here has no portable
-// std::simd form (cvtepu8_epi32 8->32-bit widening), so we PRAGMATICALLY keep
-// the x86 AVX2 intrinsics. The haswell kernel depends only on <immintrin.h>
-// (no haswell simd:: types), so it is backend agnostic and is reused VERBATIM
-// here. The vec<->__m256i bridge is not required because the algorithm never
-// leaves raw __m256i.
-//
-// This file is #included inside namespace simdutf::SIMDUTF_IMPLEMENTATION by
+// #included inside namespace simdutf::SIMDUTF_IMPLEMENTATION::{anon} by
 // stdsimd/impl_latin1.inc.cpp.
 
-#include "haswell/avx2_convert_latin1_to_utf32.cpp"
+#if SIMDUTF_STDSIMD_HAS_AVX2
+  #include "haswell/avx2_convert_latin1_to_utf32.cpp"
+  #define stdsimd_convert_latin1_to_utf32 avx2_convert_latin1_to_utf32
+#else
+  #include "westmere/sse_convert_latin1_to_utf32.cpp"
+  #define stdsimd_convert_latin1_to_utf32 sse_convert_latin1_to_utf32
+#endif
