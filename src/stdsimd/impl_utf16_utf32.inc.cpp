@@ -175,15 +175,10 @@ simdutf_warn_unused size_t implementation::convert_valid_utf16be_to_utf32(
 }
 
 // ===========================================================================
-// utf32 -> utf16
-//   * AVX2/AVX512 tiers: REAL SIMD via the tier-selected haswell(256) kernel
-//     (stdsimd_convert_utf32_to_utf16) + scalar tail.
-//   * SSE tier: scalar. The westmere SSE kernel needs the full westmere simd::
-//     library, which the stdsimd backend does not expose; see
-//     stdsimd/convert_utf32_to_utf16.cpp.
+// utf32 -> utf16  (tier-selected kernel + scalar tail): REAL SIMD on all tiers.
+//   AVX2/AVX512 use haswell's 256-bit kernel; SSE uses a pure-128-bit kernel
+//   (both via stdsimd_convert_utf32_to_utf16; see convert_utf32_to_utf16.cpp).
 // ===========================================================================
-#if SIMDUTF_STDSIMD_HAS_AVX2
-
 simdutf_warn_unused size_t implementation::convert_utf32_to_utf16le(
     const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
   std::pair<const char32_t *, char16_t *> ret =
@@ -273,33 +268,6 @@ simdutf_warn_unused result implementation::convert_utf32_to_utf16be_with_errors(
   return ret.first;
 }
 
-#else // !SIMDUTF_STDSIMD_HAS_AVX2 (SSE tier): utf32 -> utf16 stays scalar.
-
-simdutf_warn_unused size_t implementation::convert_utf32_to_utf16le(
-    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf32_to_utf16::convert<endianness::LITTLE>(buf, len,
-                                                             utf16_output);
-}
-
-simdutf_warn_unused size_t implementation::convert_utf32_to_utf16be(
-    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf32_to_utf16::convert<endianness::BIG>(buf, len,
-                                                          utf16_output);
-}
-
-simdutf_warn_unused result implementation::convert_utf32_to_utf16le_with_errors(
-    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf32_to_utf16::convert_with_errors<endianness::LITTLE>(
-      buf, len, utf16_output);
-}
-
-simdutf_warn_unused result implementation::convert_utf32_to_utf16be_with_errors(
-    const char32_t *buf, size_t len, char16_t *utf16_output) const noexcept {
-  return scalar::utf32_to_utf16::convert_with_errors<endianness::BIG>(
-      buf, len, utf16_output);
-}
-
-#endif // SIMDUTF_STDSIMD_HAS_AVX2
 
 // utf32 -> utf16 valid_ variants delegate to the non-valid ones on every tier
 // (exactly like haswell), so they pick up whichever path the tier selected.
